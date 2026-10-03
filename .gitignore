@@ -1,0 +1,7 @@
+# database SQLite (isi data label, jangan di-commit)
+data/*.db
+data/*.db-wal
+data/*.db-shm
+
+# pustaka JS yang diunduh otomatis saat build
+static/vendor/

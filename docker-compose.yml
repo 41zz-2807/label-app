@@ -1,0 +1,13 @@
+services:
+  label-app:
+    build: .
+    container_name: label-app
+    ports:
+      - "8010:8010"
+    environment:
+      PORT: "8010"
+      DB_PATH: /app/data/labels.db
+    volumes:
+      # database SQLite tersimpan di folder ./data pada proyek ini
+      - ./data:/app/data
+    restart: unless-stopped

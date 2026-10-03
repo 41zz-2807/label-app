@@ -1,0 +1,1034 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cetak Label dari CSV / Excel</title>
+<script src="/vendor/jspdf.umd.min.js"></script>
+<script src="/vendor/xlsx.full.min.js"></script>
+<script src="/vendor/JsBarcode.all.min.js"></script>
+<script src="/vendor/qrcode.min.js"></script>
+<style>
+:root{
+  --bg:#f1f3f0; --panel:#ffffff; --ink:#1c2623; --muted:#5d6a65; --line:#d8ddd9;
+  --field:#f8f9f7; --accent:#f0b429; --accent-ink:#3b2a00; --mat:#2c5b4c; --matline:rgba(255,255,255,.14);
+  --danger:#b3261e; --btn:#1c2623; --btn-ink:#ffffff;
+  box-sizing:border-box; padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#111613; --panel:#1b221f; --ink:#e8eeeb; --muted:#9aa9a2; --line:#323f3a;
+    --field:#151b18; --accent:#f0b429; --accent-ink:#3b2a00; --mat:#244a3e; --matline:rgba(255,255,255,.12);
+    --danger:#ff8a80; --btn:#f0b429; --btn-ink:#2a1e00;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#111613; --panel:#1b221f; --ink:#e8eeeb; --muted:#9aa9a2; --line:#323f3a;
+  --field:#151b18; --accent:#f0b429; --accent-ink:#3b2a00; --mat:#244a3e; --matline:rgba(255,255,255,.12);
+  --danger:#ff8a80; --btn:#f0b429; --btn-ink:#2a1e00;
+}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif}
+button,input,select,textarea{font:inherit;color:inherit}
+.app{display:grid;grid-template-columns:minmax(320px,410px) 1fr;min-height:100vh}
+.side{padding:20px 20px 40px;border-right:1px solid var(--line);background:var(--panel);overflow-y:auto}
+.brand h1{font-size:20px;line-height:1.2;margin:0 0 6px;font-weight:600}
+.brand p{margin:0;color:var(--muted)}
+section{margin-top:22px;padding-top:18px;border-top:1px solid var(--line)}
+h2{font-size:14px;margin:0 0 10px;font-weight:600}
+.muted{color:var(--muted)}
+.small{font-size:12.5px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+.f{display:flex;flex-direction:column;gap:4px;min-width:0}
+.f>span{font-size:12.5px;color:var(--muted)}
+.f.row{flex-direction:row;align-items:center;gap:8px}
+.f.row>span{color:var(--ink)}
+input[type=number],input[type=text],select,textarea{width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:6px;background:var(--field);min-width:0}
+textarea{resize:vertical}
+input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+input[type=checkbox]{width:16px;height:16px;accent-color:var(--accent)}
+.stack{display:flex;flex-direction:column;gap:10px}
+.btn{border:1px solid var(--line);background:var(--field);border-radius:6px;padding:7px 12px;cursor:pointer}
+.btn:hover{border-color:var(--muted)}
+.btn.primary{background:var(--btn);color:var(--btn-ink);border-color:var(--btn);font-weight:600;padding:9px 16px}
+.btn.primary:disabled{opacity:.6;cursor:wait}
+.btn.danger{color:var(--danger)}
+.btn.sm{padding:4px 9px;font-size:12.5px}
+.filebtn{display:flex;align-items:center;gap:10px;padding:12px;border:1.5px dashed var(--muted);border-radius:8px;cursor:pointer;background:var(--field)}
+.filebtn:hover{border-color:var(--ink)}
+.filebtn input{display:none}
+.tag{display:inline-block;padding:1px 8px;border-radius:99px;background:var(--accent);color:var(--accent-ink);font-size:12px;font-weight:600}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{border:1px solid var(--line);background:var(--field);border-radius:99px;padding:2px 10px;font-size:12.5px;cursor:pointer}
+.chip:hover{border-color:var(--ink)}
+.items{display:flex;flex-direction:column;gap:4px;margin:8px 0}
+.item{display:flex;gap:8px;align-items:baseline;text-align:left;border:1px solid var(--line);background:var(--field);border-radius:6px;padding:6px 9px;cursor:pointer;width:100%}
+.item.sel{border-color:var(--accent);box-shadow:inset 3px 0 0 var(--accent)}
+.item b{font-weight:600;min-width:56px}
+.item span{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.addrow{display:flex;gap:6px;flex-wrap:wrap}
+.props{margin-top:12px;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--field)}
+.props .stack{gap:9px}
+.props input[type=number],.props input[type=text],.props select,.props textarea{background:var(--panel)}
+.propshead{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.propshead b{font-weight:600}
+.hide{display:none!important}
+
+.inline{display:flex;gap:6px;align-items:center}
+.inline select,.inline input{flex:1}
+.dbblock{display:flex;flex-direction:column;gap:6px}
+.dbblock>b{font-size:12.5px;color:var(--muted);font-weight:500}
+details.hist summary{cursor:pointer;color:var(--muted);font-size:12.5px}
+.hrow{padding:6px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+.hrow:last-child{border-bottom:0}
+/* stage */
+.stage{position:sticky;top:0;align-self:start;height:100vh;display:flex;flex-direction:column;padding:16px;gap:12px;min-width:0}
+.toolbar{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center;justify-content:space-between}
+.nav{display:flex;align-items:center;gap:8px}
+.nav .btn{padding:4px 11px}
+.mat{flex:1;min-height:280px;border-radius:10px;background-color:var(--mat);
+  background-image:linear-gradient(var(--matline) 1px,transparent 1px),linear-gradient(90deg,var(--matline) 1px,transparent 1px);
+  background-position:center center;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative}
+.label{position:relative;background:#fff;color:#000;box-shadow:0 6px 22px rgba(0,0,0,.35);flex:none;font-family:Helvetica,Arial,'Liberation Sans',sans-serif}
+.el{position:absolute;cursor:move;touch-action:none;user-select:none}
+.el:hover{outline:1px dashed rgba(240,180,41,.9)}
+.el.sel{outline:2px solid var(--accent)}
+.el .ln{position:absolute;left:0;right:0;white-space:pre;overflow:visible}
+.el svg{position:absolute;display:block}
+.el.bad{outline:1.5px dashed #c62828;color:#c62828;font-size:11px;display:flex;align-items:center;justify-content:center;text-align:center;line-height:1.1}
+.handle{position:absolute;right:-6px;bottom:-6px;width:11px;height:11px;background:var(--accent);border:1.5px solid #fff;border-radius:2px;cursor:nwse-resize;touch-action:none}
+.under{display:flex;gap:16px;align-items:flex-start;min-height:0}
+.thumb{flex:none;height:132px;display:flex;align-items:center}
+.thumb svg{height:132px;width:auto;border-radius:3px;box-shadow:0 1px 6px rgba(0,0,0,.25);background:#fff}
+.summary{min-width:0}
+.summary p{margin:0 0 4px}
+.status{min-height:20px;font-size:13px}
+.status.err{color:var(--danger)}
+.warn{color:var(--danger)}
+
+@media (max-width:900px){
+  .app{grid-template-columns:1fr}
+  .side{border-right:0;order:2}
+  .stage{position:static;height:auto;order:1}
+  .mat{flex:none;height:56vh;min-height:260px}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <header class="brand">
+      <h1>Cetak label dari data</h1>
+      <p>Muat CSV atau Excel, rancang label, simpan sebagai PDF. Semua diproses di browser; data tidak dikirim ke mana pun.</p>
+    </header>
+
+    <section>
+      <h2>Data</h2>
+      <label class="filebtn">
+        <input type="file" id="file" accept=".csv,.tsv,.txt,.xlsx,.xls,.xlsm,.ods">
+        <span><b>Pilih file</b> CSV atau Excel<br><span class="muted small">Baris pertama dibaca sebagai nama kolom</span></span>
+      </label>
+      <div class="stack" style="margin-top:10px">
+        <div id="dataInfo" class="small"></div>
+        <label class="f hide" id="sheetWrap"><span>Sheet</span><select id="sheet"></select></label>
+        <div class="grid2">
+          <label class="f"><span>Jumlah cetak per baris</span>
+            <select id="qtyCol"></select>
+          </label>
+          <label class="f" id="copiesWrap"><span>Salinan (semua baris)</span>
+            <input type="number" id="copies" min="1" max="9999" step="1" value="1">
+          </label>
+        </div>
+      </div>
+    </section>
+
+    <section id="dbSec" class="hide">
+      <h2>Tersimpan di database</h2>
+      <div class="stack">
+        <div class="dbblock">
+          <b>Templat label</b>
+          <div class="inline"><select id="tplSel" aria-label="Pilih templat"></select>
+            <button class="btn sm" id="tplLoad">Muat</button><button class="btn sm danger" id="tplDel">Hapus</button></div>
+          <div class="inline"><input type="text" id="tplName" placeholder="Nama templat" maxlength="120">
+            <button class="btn sm" id="tplSave">Simpan</button></div>
+        </div>
+        <div class="dbblock">
+          <b>Data (CSV/Excel yang sudah dimuat)</b>
+          <div class="inline"><select id="dsSel" aria-label="Pilih data"></select>
+            <button class="btn sm" id="dsLoad">Muat</button><button class="btn sm danger" id="dsDel">Hapus</button></div>
+          <div class="inline"><input type="text" id="dsName" placeholder="Nama data" maxlength="120">
+            <button class="btn sm" id="dsSave">Simpan</button></div>
+        </div>
+        <details class="hist">
+          <summary>Riwayat cetak</summary>
+          <div id="histList" style="margin-top:6px"></div>
+          <button class="btn sm danger" id="histClear" style="margin-top:8px">Hapus riwayat</button>
+        </details>
+      </div>
+    </section>
+
+    <section>
+      <h2>Kertas dan ukuran label</h2>
+      <div class="stack">
+        <label class="f"><span>Mode cetak</span>
+          <select data-path="page.mode">
+            <option value="sheet">Lembar stiker (banyak label per halaman)</option>
+            <option value="single">Satu label per halaman (printer thermal/roll)</option>
+          </select>
+        </label>
+        <div class="grid2">
+          <label class="f"><span>Lebar label (mm)</span><input type="number" data-path="label.w" min="5" step="0.5"></label>
+          <label class="f"><span>Tinggi label (mm)</span><input type="number" data-path="label.h" min="5" step="0.5"></label>
+        </div>
+        <div id="sheetOpts" class="stack">
+          <div class="grid2">
+            <label class="f"><span>Ukuran kertas</span>
+              <select data-path="page.size">
+                <option>A4</option><option>A5</option><option>A3</option><option>Letter</option><option>F4</option><option>Custom</option>
+              </select>
+            </label>
+            <label class="f"><span>Orientasi</span>
+              <select data-path="page.orient"><option value="portrait">Potret</option><option value="landscape">Lanskap</option></select>
+            </label>
+          </div>
+          <div class="grid2">
+            <label class="f"><span>Lebar kertas (mm)</span><input type="number" data-path="page.w" min="20" step="0.1"></label>
+            <label class="f"><span>Tinggi kertas (mm)</span><input type="number" data-path="page.h" min="20" step="0.1"></label>
+          </div>
+          <div class="grid2">
+            <label class="f"><span>Margin kiri/kanan (mm)</span><input type="number" data-path="page.ml" min="0" step="0.5"></label>
+            <label class="f"><span>Margin atas (mm)</span><input type="number" data-path="page.mt" min="0" step="0.5"></label>
+          </div>
+          <div class="grid2">
+            <label class="f"><span>Jarak antar kolom (mm)</span><input type="number" data-path="page.gx" min="0" step="0.5"></label>
+            <label class="f"><span>Jarak antar baris (mm)</span><input type="number" data-path="page.gy" min="0" step="0.5"></label>
+          </div>
+          <div class="grid3">
+            <label class="f"><span>Kolom</span><input type="number" data-path="page.cols" min="0" step="1"></label>
+            <label class="f"><span>Baris</span><input type="number" data-path="page.rows" min="0" step="1"></label>
+            <label class="f"><span>Lewati label</span><input type="number" data-path="page.offset" min="0" step="1"></label>
+          </div>
+          <label class="f row"><input type="checkbox" data-path="page.fillRow"><span>Isi semua kolom dengan data yang sama (1 baris data → 2 label berjajar yang identik)</span></label>
+          <div class="muted small">Kolom/baris 0 = hitung otomatis. "Lewati label" berguna untuk lembar stiker yang sebagian sudah terpakai.</div>
+        </div>
+        <label class="f row"><input type="checkbox" data-path="page.border"><span>Cetak garis tepi label (untuk uji cetak di kertas biasa)</span></label>
+      </div>
+    </section>
+
+    <section>
+      <h2>Isi label</h2>
+      <div class="addrow">
+        <button class="btn sm" data-add="text">+ Teks</button>
+        <button class="btn sm" data-add="barcode">+ Barcode</button>
+        <button class="btn sm" data-add="qr">+ QR</button>
+        <button class="btn sm" data-add="box">+ Kotak/garis</button>
+        <button class="btn sm" data-add="symbol">+ Simbol</button>
+      </div>
+      <div id="elList" class="items"></div>
+      <div id="props"></div>
+      <p class="muted small" style="margin-top:12px">Geser elemen langsung di pratinjau; tarik kotak kuning di pojok untuk mengubah ukuran. Tombol panah menggeser 0,5 mm. Gunakan <code>{NamaKolom}</code> untuk mengambil isi dari data. Simbol (panah, bintang, cek, dan lainnya) juga bisa diperbesar lewat gagang yang sama dan ikut masuk ke PDF sebagai gambar vektor. Font PDF memakai Helvetica, jadi karakter non-Latin belum didukung.</p>
+      <button class="btn sm" id="reset" style="margin-top:6px">Kembalikan templat awal</button>
+    </section>
+  </aside>
+
+  <main class="stage">
+    <div class="toolbar">
+      <div class="nav">
+        <button class="btn" id="prev" aria-label="Baris sebelumnya">&lsaquo;</button>
+        <span id="rowLabel" class="small" style="min-width:110px;text-align:center"></span>
+        <button class="btn" id="next" aria-label="Baris berikutnya">&rsaquo;</button>
+      </div>
+      <button class="btn primary" id="export">Buat PDF</button>
+    </div>
+    <div class="mat" id="mat"></div>
+    <div id="status" class="status" role="status" aria-live="polite"></div>
+    <div class="under">
+      <div class="thumb" id="thumb"></div>
+      <div class="summary small" id="summary"></div>
+    </div>
+  </main>
+</div>
+
+<script>
+(function(){
+"use strict";
+const $ = (s,r=document)=>r.querySelector(s);
+const PT = 0.352778, LH = 1.15;
+const PAGES = {A4:[210,297],A5:[148,210],A3:[297,420],Letter:[215.9,279.4],F4:[215,330]};
+const KEY = 'labelmaker:v1';
+let uid = 1;
+
+if (window.qrcode && qrcode.stringToBytesFuncs && qrcode.stringToBytesFuncs['UTF-8']) {
+  qrcode.stringToBytes = qrcode.stringToBytesFuncs['UTF-8'];
+}
+
+/* ---------- state ---------- */
+function defaultTemplate(){
+  return {
+    page:{mode:'sheet',size:'Custom',orient:'landscape',w:113,h:32,ml:5,mt:1,gx:2,gy:0,cols:2,rows:1,offset:0,border:true,fillRow:false},
+    label:{w:50,h:30},
+    elements:[
+      {type:'text',x:2,y:2,w:46,h:7,content:'{Nama}',fs:11,bold:true,align:'left',valign:'top',fit:true},
+      {type:'text',x:2,y:9.5,w:46,h:5,content:'{Harga}',fs:9,bold:false,align:'left',valign:'top',fit:false},
+      {type:'barcode',x:2,y:15.5,w:46,h:12,content:'{Kode}',fmt:'CODE128',showText:true}
+    ]
+  };
+}
+const SAMPLE = {
+  cols:['Nama','Kode','Harga','Lokasi'],
+  rows:[
+    ['Kopi Arabika 250 g','BRG-0001','Rp 85.000','Rak A1'],
+    ['Teh Hijau 100 g','BRG-0002','Rp 42.500','Rak A2'],
+    ['Gula Aren 500 g','BRG-0003','Rp 28.000','Rak B1'],
+    ['Madu Hutan 350 ml','BRG-0004','Rp 95.000','Rak B3'],
+    ['Cokelat Batang 80 g','BRG-0005','Rp 31.000','Rak C2'],
+    ['Keripik Singkong Pedas Manis Ukuran Besar','BRG-0006','Rp 18.000','Rak C4']
+  ]
+};
+const state = Object.assign(defaultTemplate(), {
+  columns:[], rows:[], isSample:true, source:{names:[],sheets:{},current:''},
+  qtyCol:'', copies:1, sel:0, rowIdx:0
+});
+state.elements.forEach(e=>e.id=uid++);
+
+function loadSaved(){
+  try{
+    const raw = localStorage.getItem(KEY); if(!raw) return;
+    const o = JSON.parse(raw);
+    if(o && o.page && o.label && Array.isArray(o.elements) && o.elements.length){
+      Object.assign(state.page,o.page); Object.assign(state.label,o.label);
+      state.elements = o.elements.map(e=>Object.assign({id:uid++},e));
+      if(typeof o.copies==='number') state.copies=o.copies;
+    }
+  }catch(_){}
+}
+function persist(){
+  try{
+    localStorage.setItem(KEY, JSON.stringify({page:state.page,label:state.label,elements:state.elements,copies:state.copies}));
+  }catch(_){}
+}
+
+/* ---------- helpers ---------- */
+const esc = s => String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function getPath(p){return p.split('.').reduce((o,k)=>o[k],state)}
+function setPath(p,v){const a=p.split('.');const l=a.pop();a.reduce((o,k)=>o[k],state)[l]=v}
+const curRow = () => state.rows[state.rowIdx] || {};
+function resolve(tpl,row){
+  return String(tpl==null?'':tpl).replace(/\{([^{}]+)\}/g,(m,k)=>{
+    k=k.trim();
+    if(row && Object.prototype.hasOwnProperty.call(row,k)) return row[k];
+    const lk = Object.keys(row||{}).find(x=>x.toLowerCase()===k.toLowerCase());
+    return lk ? row[lk] : '';
+  });
+}
+let _md=null;
+function md(){ if(!_md){ _md = new window.jspdf.jsPDF({unit:'mm'}); } return _md; }
+
+function pageGeom(){
+  const p=state.page, L=state.label;
+  if(p.mode==='single') return {pw:L.w,ph:L.h,cols:1,rows:1,ml:0,mt:0,gx:0,gy:0,per:1,fits:true};
+  let pw=p.w, ph=p.h;
+  if(p.orient==='landscape' && pw<ph) [pw,ph]=[ph,pw];
+  if(p.orient==='portrait' && pw>ph) [pw,ph]=[ph,pw];
+  const cols = p.cols>0 ? p.cols : Math.max(1,Math.floor((pw-2*p.ml+p.gx+0.001)/(L.w+p.gx)));
+  const rows = p.rows>0 ? p.rows : Math.max(1,Math.floor((ph-2*p.mt+p.gy+0.001)/(L.h+p.gy)));
+  const needW = p.ml*2 + cols*L.w + (cols-1)*p.gx, needH = p.mt*2 + rows*L.h + (rows-1)*p.gy;
+  return {pw,ph,cols,rows,ml:p.ml,mt:p.mt,gx:p.gx,gy:p.gy,per:cols*rows,fits:needW<=pw+0.01 && needH<=ph+0.01};
+}
+function qtyOf(r){
+  let n = state.qtyCol ? parseFloat(String(r[state.qtyCol]).replace(',','.')) : state.copies;
+  if(!isFinite(n)) n=0;
+  n = Math.max(0,Math.min(Math.floor(n),9999));
+  if(state.page.mode!=='single' && state.page.fillRow) n *= pageGeom().cols;
+  return n;
+}
+function totalLabels(){ return state.rows.reduce((a,r)=>a+qtyOf(r),0); }
+
+/* ---------- text layout (shared by preview and PDF) ---------- */
+function textLayout(doc,str,el){
+  doc.setFont('helvetica', el.bold?'bold':'normal');
+  const build = f => {
+    doc.setFontSize(f);
+    const lines=[];
+    String(str).split(/\r?\n/).forEach(s=>{
+      const parts = s===''?[''] : doc.splitTextToSize(s, Math.max(el.w,1));
+      parts.forEach(x=>lines.push(x));
+    });
+    return lines;
+  };
+  let fs = Math.max(3,el.fs||10), lines = build(fs);
+  if(el.fit){
+    const over = () => lines.length*fs*PT*LH > el.h+0.01 || lines.some(l=>doc.getTextWidth(l) > el.w+0.01);
+    while(fs>4 && over()){ fs-=0.5; lines=build(fs); }
+  }
+  const lh = fs*PT*LH, bh = lines.length*lh;
+  const off = el.valign==='middle' ? (el.h-bh)/2 : el.valign==='bottom' ? el.h-bh : 0;
+  return {fs,lines,lh,off};
+}
+
+/* ---------- barcode / qr geometry ---------- */
+function barcodeRuns(text,fmt){
+  if(!text) return null;
+  try{
+    const o={};
+    JsBarcode(o,String(text),{format:fmt,displayValue:false,margin:0,valid:()=>{}});
+    // object renderer swallows invalid state silently only when valid cb is set, so verify encodings
+    if(!o.encodings || !o.encodings.length) return null;
+    let bits='';
+    o.encodings.forEach(e=>{ bits+=e.data; });
+    const q=10, total=bits.length+q*2, runs=[];
+    let i=0;
+    while(i<bits.length){
+      if(bits[i]==='1'){ let j=i; while(j<bits.length && bits[j]==='1') j++; runs.push([i+q,j-i]); i=j; }
+      else i++;
+    }
+    return {total,runs};
+  }catch(_){ return null; }
+}
+function qrModules(text){
+  if(!text) return null;
+  try{
+    const qr=qrcode(0,'M'); qr.addData(String(text)); qr.make();
+    const n=qr.getModuleCount(); const dark=[];
+    for(let r=0;r<n;r++) for(let c=0;c<n;c++) if(qr.isDark(r,c)) dark.push([r,c]);
+    return {n,dark};
+  }catch(_){ return null; }
+}
+function bcTextHeight(el){ return el.showText ? Math.min(el.h*0.3,3.5) : 0; }
+
+/* ---------- symbol geometry (shared by preview and PDF) ----------
+   Titik dalam kotak normalisasi 0..100 (sumbu y ke bawah).            */
+const SYMBOLS = (function(){
+  const build=(label,pts,closed,def)=>({label,subs:pts.map(p=>({p,closed})),style:def.style||'S',lw:def.lw||0.4,aspect:def.aspect!==false});
+  const S=(label,pts,o)=>build(label,pts,false,o||{});
+  const P=(label,pts,o)=>build(label,pts,true,Object.assign({style:'F'},o||{}));
+  const O=(label,pts,o)=>build(label,pts,true,Object.assign({style:'S'},o||{}));
+  const ring=n=>{const a=[];for(let i=0;i<n;i++){const t=2*Math.PI*i/n;a.push([50+50*Math.cos(t),50+50*Math.sin(t)]);}return a;};
+  const star=(n,ro,ri)=>{const a=[];for(let i=0;i<n*2;i++){const t=-Math.PI/2+i*Math.PI/n,r=i%2?ri:ro;a.push([50+r*Math.cos(t),50+r*Math.sin(t)]);}return a;};
+  const heart=()=>{const a=[];for(let i=0;i<=48;i++){const t=2*Math.PI*i/48;
+    a.push([16*Math.pow(Math.sin(t),3), 13*Math.cos(t)-5*Math.cos(2*t)-2*Math.cos(3*t)-Math.cos(4*t)]);}
+  const xs=a.map(p=>p[0]), ys=a.map(p=>p[1]);
+  const x0=Math.min.apply(null,xs), x1=Math.max.apply(null,xs), y0=Math.min.apply(null,ys), y1=Math.max.apply(null,ys);
+  return a.map(p=>[8+(p[0]-x0)/(x1-x0)*84, 8+(y1-p[1])/(y1-y0)*84]);};
+  return {
+    arrowRight: S('Panah →',[[[4,50],[82,50]],[[60,22],[96,50],[60,78]]]),
+    arrowLeft:  S('Panah ←',[[[96,50],[18,50]],[[40,22],[4,50],[40,78]]]),
+    arrowUp:    S('Panah ↑',[[[50,96],[50,18]],[[22,40],[50,4],[78,40]]]),
+    arrowDown:  S('Panah ↓',[[[50,4],[50,82]],[[22,60],[50,96],[78,60]]]),
+    arrowBoth:  S('Panah ⇄',[[[8,50],[92,50]],[[26,24],[6,50],[26,76]],[[74,24],[94,50],[74,76]]]),
+    chevron:    S('Chevron 〉',[[[26,6],[72,50],[26,94]]],{lw:0.8}),
+    lineH:      S('Garis —',[[[2,50],[98,50]]],{aspect:false,lw:0.3}),
+    lineV:      S('Garis │',[[[50,2],[50,98]]],{aspect:false,lw:0.3}),
+    triRight:   P('Segitiga ▶',[[[6,6],[94,50],[6,94]]]),
+    triDown:    P('Segitiga ▼',[[[6,6],[94,6],[50,94]]]),
+    triUp:      P('Segitiga ▲',[[[50,6],[94,94],[6,94]]]),
+    diamond:    P('Ketupat ◆',[[[50,4],[96,50],[50,96],[4,50]]]),
+    plus:       P('Plus +',[[[42,6],[58,6],[58,42],[94,42],[94,58],[58,58],[58,94],[42,94],[42,58],[6,58],[6,42],[42,42]]]),
+    star5:      P('Bintang ★',[star(5,50,19)]),
+    heart:      P('Hati ♥',[heart()]),
+    bolt:       P('Petir ⚡',[[[60,4],[22,54],[46,54],[36,96],[78,42],[52,42],[64,4]]]),
+    check:      S('Centang ✓',[[[10,52],[36,82],[90,16]]],{lw:0.8}),
+    cross:      S('Silang ✕',[[[14,14],[86,86]],[[86,14],[14,86]]],{lw:0.8}),
+    circle:     O('Lingkaran ○',[ring(48)]),
+    disc:       P('Lingkaran isi ●',[ring(48)]),
+    rect:       O('Persegi ▭',[[[4,4],[96,4],[96,96],[4,96]]],{lw:0.5}),
+    rectFill:   P('Persegi isi ▬',[[[4,4],[96,4],[96,96],[4,96]]])
+  };
+})();
+function symOf(el){ return SYMBOLS[el.sym] || SYMBOLS.arrowRight; }
+function symStyle(el){ const s=symOf(el); return el.style || s.style; }
+function symLw(el){ const s=symOf(el); return Math.max(0.05, el.lw!=null && el.lw!=='' ? +el.lw : s.lw); }
+/* ubah simbol (skema 0..100) ke koordinat mm di dalam kotak elemen */
+function symGeom(el){
+  const s=symOf(el), a=s.aspect!==false;
+  const size=a?Math.max(0.01,Math.min(el.w,el.h)):0;
+  const sx=a?size/100:Math.max(el.w,0.01)/100, sy=a?size/100:Math.max(el.h,0.01)/100;
+  const ox=a?(el.w-size)/2:0, oy=a?(el.h-size)/2:0;
+  return s.subs.map(u=>({closed:u.closed, p:u.p.map(pt=>[ox+pt[0]*sx, oy+pt[1]*sy])}));
+}
+function symbolSVG(el,scale){
+  const g=symGeom(el), st=symStyle(el), lw=symLw(el);
+  const w=Math.max(el.w,0.01), h=Math.max(el.h,0.01);
+  const d=g.map(u=>{
+    const close=u.closed||st!=='S';
+    let out='M'+u.p[0][0].toFixed(3)+' '+u.p[0][1].toFixed(3);
+    for(let i=1;i<u.p.length;i++) out+='L'+u.p[i][0].toFixed(3)+' '+u.p[i][1].toFixed(3);
+    return out+(close?'Z':'');
+  }).join(' ');
+  const fill=st!=='S'?'#000':'none', stroke=st!=='F'?'#000':'none';
+  return '<svg style="left:0;top:0" width="'+(w*scale)+'" height="'+(h*scale)+'" viewBox="0 0 '+w+' '+h+'"'
+    +' preserveAspectRatio="none" aria-hidden="true"><path d="'+d+'" fill="'+fill+'" fill-rule="nonzero"'
+    +' stroke="'+stroke+'" stroke-width="'+lw+'" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+}
+
+/* ---------- data loading ---------- */
+function parseCSV(text){
+  text = text.replace(/^\uFEFF/,'');
+  const firstLine = text.split(/\r?\n/,1)[0] || '';
+  const count = ch => firstLine.split(ch).length-1;
+  const cand = [',',';','\t','|'].map(c=>[c,count(c)]).sort((a,b)=>b[1]-a[1]);
+  const d = cand[0][1]>0 ? cand[0][0] : ',';
+  const rows=[]; let row=[], cell='', q=false;
+  for(let i=0;i<text.length;i++){
+    const ch=text[i];
+    if(q){
+      if(ch==='"'){ if(text[i+1]==='"'){cell+='"';i++;} else q=false; }
+      else cell+=ch;
+    } else if(ch==='"'){ q=true; }
+    else if(ch===d){ row.push(cell); cell=''; }
+    else if(ch==='\n'||ch==='\r'){
+      if(ch==='\r' && text[i+1]==='\n') i++;
+      row.push(cell); cell=''; rows.push(row); row=[];
+    } else cell+=ch;
+  }
+  if(cell!==''||row.length){ row.push(cell); rows.push(row); }
+  return rows;
+}
+function applySheet(name){
+  const arr = state.source.sheets[name] || [];
+  state.source.current = name;
+  const head = (arr[0]||[]).map(x=>String(x==null?'':x).trim());
+  const seen={};
+  const cols = head.map((h,i)=>{
+    let n = h || ('Kolom '+(i+1));
+    if(seen[n]){ seen[n]++; n = n+'_'+seen[n]; } else seen[n]=1;
+    return n;
+  });
+  const rows=[];
+  for(let r=1;r<arr.length;r++){
+    const line=arr[r]||[];
+    if(!line.some(v=>String(v==null?'':v).trim()!=='')) continue;
+    const o={}; cols.forEach((c,i)=>{ o[c]=String(line[i]==null?'':line[i]); });
+    rows.push(o);
+  }
+  state.columns=cols; state.rows=rows; state.rowIdx=0;
+  if(state.qtyCol && !cols.includes(state.qtyCol)) state.qtyCol='';
+}
+async function loadFile(file){
+  setStatus('Membaca '+file.name+'…');
+  try{
+    const ext = file.name.split('.').pop().toLowerCase();
+    let sheets={}, names=[];
+    if(['csv','tsv','txt'].includes(ext)){
+      sheets['Data']=parseCSV(await file.text()); names=['Data'];
+    } else {
+      const wb = XLSX.read(await file.arrayBuffer(),{type:'array'});
+      wb.SheetNames.forEach(n=>{
+        sheets[n]=XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,raw:false,defval:''});
+      });
+      names=wb.SheetNames;
+    }
+    state.source={names,sheets,current:names[0]};
+    state.isSample=false;
+    state.curDataset=file.name.replace(/\.[^.]+$/,'');
+    const dn=$('#dsName'); if(dn) dn.value=state.curDataset;
+    applySheet(names[0]);
+    if(!state.rows.length){ setStatus('File terbaca, tetapi tidak ada baris data di bawah baris judul.',true); }
+    else setStatus('');
+    renderData(); update();
+  }catch(err){
+    setStatus('Gagal membaca file: '+(err && err.message ? err.message : err),true);
+  }
+}
+
+/* ---------- rendering: data panel ---------- */
+function renderData(){
+  const info=$('#dataInfo');
+  info.innerHTML = (state.isSample?'<span class="tag">Data contoh</span> ':'')
+    + state.rows.length+' baris, '+state.columns.length+' kolom'
+    + '<div class="chips" style="margin-top:8px">'+state.columns.map(c=>'<span class="chip" style="cursor:default">'+esc(c)+'</span>').join('')+'</div>';
+  const sw=$('#sheetWrap');
+  if(state.source.names.length>1){
+    sw.classList.remove('hide');
+    $('#sheet').innerHTML=state.source.names.map(n=>'<option'+(n===state.source.current?' selected':'')+'>'+esc(n)+'</option>').join('');
+  } else sw.classList.add('hide');
+  const q=$('#qtyCol');
+  q.innerHTML='<option value="">Sama untuk semua baris</option>'+state.columns.map(c=>'<option value="'+esc(c)+'"'+(c===state.qtyCol?' selected':'')+'>Kolom: '+esc(c)+'</option>').join('');
+  $('#copiesWrap').classList.toggle('hide',!!state.qtyCol);
+  $('#copies').value=state.copies;
+}
+
+/* ---------- rendering: element list and properties ---------- */
+const TYPE_NAME={text:'Teks',barcode:'Barcode',qr:'QR',box:'Kotak',symbol:'Simbol'};
+function elLabel(e){
+  if(e.type==='symbol') return symOf(e).label;
+  if(e.type==='box') return e.h===0?'garis':'persegi';
+  return (e.content||'(kosong)').replace(/\n/g,' ');
+}
+function renderList(){
+  $('#elList').innerHTML = state.elements.map((e,i)=>
+    '<button class="item'+(i===state.sel?' sel':'')+'" data-i="'+i+'"><b>'+TYPE_NAME[e.type]+'</b><span>'+esc(elLabel(e))+'</span></button>'
+  ).join('') || '<p class="muted small">Belum ada elemen.</p>';
+}
+function renderProps(){
+  const box=$('#props'); const el=state.elements[state.sel];
+  if(!el){ box.innerHTML=''; box.className=''; return; }
+  const f=(label,inner)=>'<label class="f"><span>'+label+'</span>'+inner+'</label>';
+  const num=(k,label,step,min)=>f(label,'<input type="number" data-k="'+k+'" value="'+el[k]+'" step="'+(step||0.5)+'"'+(min!=null?' min="'+min+'"':'')+'>');
+  const chk=(k,label)=>'<label class="f row"><input type="checkbox" data-k="'+k+'"'+(el[k]?' checked':'')+'><span>'+label+'</span></label>';
+  let h='<div class="propshead"><b>'+TYPE_NAME[el.type]+' terpilih</b><span><button class="btn sm" data-act="dup">Gandakan</button> <button class="btn sm danger" data-act="del">Hapus</button></span></div><div class="stack">';
+  if(el.type!=='box' && el.type!=='symbol'){
+    h+=f('Isi (pakai {NamaKolom} untuk data)','<textarea data-k="content" rows="2">'+esc(el.content)+'</textarea>');
+    h+='<div class="chips">'+state.columns.map(c=>'<button type="button" class="chip" data-col="'+esc(c)+'">'+esc(c)+'</button>').join('')+'</div>';
+  }
+  h+='<div class="grid2">'+num('x','Posisi X (mm)')+num('y','Posisi Y (mm)')+num('w','Lebar (mm)',0.5,1)+num('h','Tinggi (mm)',0.5,0)+'</div>';
+  if(el.type==='text'){
+    h+='<div class="grid2">'+num('fs','Ukuran font (pt)',0.5,3)
+      +f('Rata','<select data-k="align"><option value="left"'+(el.align==='left'?' selected':'')+'>Kiri</option><option value="center"'+(el.align==='center'?' selected':'')+'>Tengah</option><option value="right"'+(el.align==='right'?' selected':'')+'>Kanan</option></select>')+'</div>';
+    h+=f('Posisi vertikal','<select data-k="valign"><option value="top"'+(el.valign==='top'?' selected':'')+'>Atas</option><option value="middle"'+(el.valign==='middle'?' selected':'')+'>Tengah</option><option value="bottom"'+(el.valign==='bottom'?' selected':'')+'>Bawah</option></select>');
+    h+=chk('bold','Tebal')+chk('fit','Kecilkan font otomatis agar muat di kotak');
+  }
+  if(el.type==='barcode'){
+    h+=f('Jenis barcode','<select data-k="fmt">'+['CODE128','CODE39','EAN13','EAN8','UPC','ITF'].map(x=>'<option'+(el.fmt===x?' selected':'')+'>'+x+'</option>').join('')+'</select>');
+    h+=chk('showText','Tampilkan angka/teks di bawah barcode');
+    h+='<div class="muted small">Ruang kosong di kiri-kanan ditambahkan otomatis agar mudah dipindai.</div>';
+  }
+  if(el.type==='box'){
+    h+=num('lw','Tebal garis (mm)',0.1,0.05)+'<div class="muted small">Isi tinggi 0 untuk membuat garis lurus.</div>';
+  }
+  if(el.type==='symbol'){
+    const opts=Object.keys(SYMBOLS);
+    h+=f('Pilih simbol','<select data-k="sym">'+opts.map(k=>'<option value="'+k+'"'+(el.sym===k?' selected':'')+'>'+esc(SYMBOLS[k].label)+'</option>').join('')+'</select>');
+    h+='<div class="chips">'+opts.map(k=>'<button type="button" class="chip" data-sym="'+k+'"'+(el.sym===k?' style="border-color:var(--accent)"':'')+'>'+esc(SYMBOLS[k].label)+'</button>').join('')+'</div>';
+    h+=f('Gaya','<select data-k="style">'+[['S','Garis saja'],['F','Isi penuh'],['FD','Garis + isi']].map(x=>'<option value="'+x[0]+'"'+(symStyle(el)===x[0]?' selected':'')+'>'+x[1]+'</option>').join('')+'</select>');
+    h+=num('lw','Tebal garis (mm)',0.05,0.05)+'<div class="muted small">Simbol ikut diperbesar mengikuti kotak elemen (tidak gepeng). Gaya berlaku untuk semua bagian simbol.</div>';
+  }
+  h+='</div>';
+  box.className='props'; box.innerHTML=h;
+}
+function syncPos(){
+  const el=state.elements[state.sel]; if(!el) return;
+  ['x','y','w','h'].forEach(k=>{ const i=$('#props [data-k="'+k+'"]'); if(i) i.value=el[k]; });
+}
+
+/* ---------- rendering: preview ---------- */
+let curScale=6;
+function renderPreview(){
+  const mat=$('#mat'), L=state.label;
+  const aw=(mat.clientWidth||400)-56, ah=(mat.clientHeight||300)-56;
+  const s=Math.max(1,Math.min(aw/L.w, ah/L.h, 14)); curScale=s;
+  mat.style.backgroundSize=(10*s)+'px '+(10*s)+'px';
+  const row=curRow();
+  const lab=document.createElement('div'); lab.className='label';
+  lab.style.width=(L.w*s)+'px'; lab.style.height=(L.h*s)+'px';
+  state.elements.forEach((el,i)=>{
+    const d=document.createElement('div'); d.className='el'+(i===state.sel?' sel':''); d.dataset.i=i;
+    d.style.cssText+='left:'+el.x*s+'px;top:'+el.y*s+'px;width:'+el.w*s+'px;height:'+Math.max(el.h*s,0)+'px;';
+    const txt=resolve(el.content,row);
+    if(el.type==='text'){
+      const t=textLayout(md(),txt,el);
+      t.lines.forEach((ln,j)=>{
+        const l=document.createElement('div'); l.className='ln'; l.textContent=ln;
+        l.style.top=((t.off+j*t.lh)*s)+'px';
+        l.style.fontSize=(t.fs*PT*s)+'px'; l.style.lineHeight=(t.lh*s)+'px';
+        l.style.fontWeight=el.bold?'700':'400'; l.style.textAlign=el.align;
+        d.appendChild(l);
+      });
+    } else if(el.type==='barcode'){
+      const bc=barcodeRuns(txt,el.fmt);
+      if(!bc){ d.classList.add('bad'); d.textContent = txt ? 'Isi tidak valid untuk '+el.fmt : 'Barcode kosong'; }
+      else {
+        const th=bcTextHeight(el), bh=el.h-th-(th?0.4:0);
+        let rects=bc.runs.map(r=>'<rect x="'+r[0]+'" y="0" width="'+r[1]+'" height="1"/>').join('');
+        d.insertAdjacentHTML('beforeend','<svg style="left:0;top:0" width="'+el.w*s+'" height="'+bh*s+'" viewBox="0 0 '+bc.total+' 1" preserveAspectRatio="none" shape-rendering="crispEdges" fill="#000">'+rects+'</svg>');
+        if(th){
+          const l=document.createElement('div'); l.className='ln'; l.textContent=txt;
+          l.style.top=((bh+0.4)*s)+'px'; l.style.fontSize=(th*0.85*s)+'px'; l.style.lineHeight=(th*s)+'px'; l.style.textAlign='center';
+          d.appendChild(l);
+        }
+      }
+    } else if(el.type==='qr'){
+      const q=qrModules(txt);
+      if(!q){ d.classList.add('bad'); d.textContent='QR kosong'; }
+      else {
+        const size=Math.min(el.w,el.h), tot=q.n+2;
+        const path=q.dark.map(p=>'M'+(p[1]+1)+' '+(p[0]+1)+'h1v1h-1z').join('');
+        d.insertAdjacentHTML('beforeend','<svg style="left:'+((el.w-size)/2*s)+'px;top:'+((el.h-size)/2*s)+'px" width="'+size*s+'" height="'+size*s+'" viewBox="0 0 '+tot+' '+tot+'" shape-rendering="crispEdges"><path fill="#000" d="'+path+'"/></svg>');
+      }
+    } else if(el.type==='box'){
+      const bw=Math.max(el.lw||0.3,0.05)*s;
+      d.style.borderStyle='solid'; d.style.borderColor='#000';
+      d.style.borderWidth = el.h===0 ? bw+'px 0 0 0' : bw+'px';
+    } else if(el.type==='symbol'){
+      d.insertAdjacentHTML('beforeend', symbolSVG(el,s));
+    }
+    if(i===state.sel){ const hd=document.createElement('div'); hd.className='handle'; d.appendChild(hd); }
+    lab.appendChild(d);
+  });
+  lab.addEventListener('pointerdown',onDown);
+  mat.replaceChildren(lab);
+  $('#rowLabel').textContent = state.rows.length ? 'Baris '+(state.rowIdx+1)+' dari '+state.rows.length : 'Belum ada data';
+}
+
+/* drag / resize in preview */
+let drag=null;
+function onDown(e){
+  const d=e.target.closest('.el'); if(!d) return;
+  e.preventDefault();
+  const i=+d.dataset.i; const isHandle=!!e.target.closest('.handle');
+  const changed = i!==state.sel; state.sel=i;
+  const el=state.elements[i];
+  drag={i,mode:isHandle?'resize':'move',sx:e.clientX,sy:e.clientY,ox:el.x,oy:el.y,ow:el.w,oh:el.h};
+  if(changed){ renderList(); renderProps(); }
+  renderPreview();
+}
+window.addEventListener('pointermove',e=>{
+  if(!drag) return;
+  const el=state.elements[drag.i]; const dx=(e.clientX-drag.sx)/curScale, dy=(e.clientY-drag.sy)/curScale;
+  const sn=v=>Math.round(v*2)/2;
+  if(drag.mode==='move'){ el.x=sn(drag.ox+dx); el.y=sn(drag.oy+dy); }
+  else { el.w=Math.max(1,sn(drag.ow+dx)); el.h=Math.max(el.type==='box'?0:1,sn(drag.oh+dy)); }
+  renderPreview(); syncPos();
+});
+window.addEventListener('pointerup',()=>{ if(drag){ drag=null; persist(); renderList(); } });
+
+/* ---------- rendering: page thumbnail and summary ---------- */
+function renderInfo(){
+  const g=pageGeom(), total=totalLabels(), off=Math.min(state.page.offset|0,Math.max(0,g.per-1));
+  const pages = total ? Math.ceil((total+(state.page.mode==='single'?0:off))/g.per) : 0;
+  const L=state.label;
+  let cells='';
+  if(state.page.mode!=='single'){
+    const cap=Math.min(g.per,400);
+    for(let k=0;k<cap;k++){
+      const c=k%g.cols, r=Math.floor(k/g.cols);
+      const x=g.ml+c*(L.w+g.gx), y=g.mt+r*(L.h+g.gy);
+      cells+='<rect x="'+x+'" y="'+y+'" width="'+L.w+'" height="'+L.h+'" fill="'+(k<off?'#d3d9d5':'#fff7e0')+'" stroke="#8a9690" stroke-width="0.4"/>';
+    }
+  } else {
+    cells='<rect x="0" y="0" width="'+g.pw+'" height="'+g.ph+'" fill="#fff7e0" stroke="#8a9690" stroke-width="0.4"/>';
+  }
+  $('#thumb').innerHTML='<svg viewBox="0 0 '+g.pw+' '+g.ph+'" role="img" aria-label="Tata letak halaman">'+cells+'</svg>';
+  const lines=[];
+  if(state.page.mode==='single'){
+    lines.push('<p><b>'+L.w+' × '+L.h+' mm</b>, satu label tiap halaman.</p>');
+  } else {
+    lines.push('<p><b>'+g.cols+' kolom × '+g.rows+' baris = '+g.per+' label per halaman</b> pada kertas '+g.pw+' × '+g.ph+' mm.</p>');
+    if(!g.fits) lines.push('<p class="warn">Label tidak muat di kertas dengan pengaturan ini. Kurangi margin, jarak, atau jumlah kolom/baris.</p>');
+  }
+  lines.push('<p>'+total+' label dari '+state.rows.length+' baris'+(pages?' → '+pages+' halaman PDF':'')+'.</p>');
+  lines.push('<p class="muted">Saat mencetak PDF, pilih skala 100% / "Ukuran sebenarnya", bukan "Sesuaikan ke halaman".</p>');
+  $('#summary').innerHTML=lines.join('');
+}
+
+/* ---------- status ---------- */
+function setStatus(msg,err){ const s=$('#status'); s.textContent=msg||''; s.className='status'+(err?' err':''); }
+
+/* ---------- global update ---------- */
+function update(){ persist(); renderInfo(); renderPreview(); renderList(); }
+
+/* ---------- element actions ---------- */
+function addEl(type){
+  const L=state.label;
+  const base={id:uid++,type,x:2,y:2,w:Math.min(30,Math.max(5,L.w-4)),h:6};
+  if(type==='text') Object.assign(base,{content:'{'+(state.columns[0]||'Kolom')+'}',fs:10,bold:false,align:'left',valign:'top',fit:false});
+  if(type==='barcode') Object.assign(base,{content:'{'+(state.columns[1]||state.columns[0]||'Kolom')+'}',fmt:'CODE128',showText:true,h:Math.min(12,Math.max(6,L.h-4))});
+  if(type==='qr'){ const sz=Math.min(18,L.w-4,L.h-4); Object.assign(base,{content:'{'+(state.columns[1]||state.columns[0]||'Kolom')+'}',w:sz,h:sz}); }
+  if(type==='box') Object.assign(base,{w:Math.max(5,L.w-4),h:Math.max(3,L.h-4),lw:0.3});
+  if(type==='symbol'){ const sz=Math.max(3,Math.min(8,L.w-4,L.h-4)); Object.assign(base,{sym:'arrowRight',style:'S',lw:0.4,w:sz,h:sz}); }
+  state.elements.push(base); state.sel=state.elements.length-1;
+  renderList(); renderProps(); renderPreview(); persist();
+}
+
+/* ---------- PDF ---------- */
+function drawSymbolPDF(doc,el,ex,ey){
+  const st=symStyle(el);
+  doc.setLineWidth(symLw(el)); doc.setLineCap(1); doc.setLineJoin(1);
+  doc.setDrawColor(0); doc.setFillColor(0);
+  symGeom(el).forEach(u=>{
+    const fill=st!=='S', stroke=st!=='F';
+    const segs=[[0,0]];
+    for(let i=1;i<u.p.length;i++) segs.push([u.p[i][0]-u.p[i-1][0], u.p[i][1]-u.p[i-1][1]]);
+    doc.lines(segs, ex+u.p[0][0], ey+u.p[0][1], [1,1], fill?(stroke?'FD':'F'):'S', u.closed||fill);
+  });
+}
+function drawLabel(doc,row,ox,oy,ctx){
+  const L=state.label;
+  if(state.page.border){ doc.setDrawColor(140); doc.setLineWidth(0.1); doc.rect(ox,oy,L.w,L.h); }
+  doc.setTextColor(0); doc.setDrawColor(0); doc.setFillColor(0);
+  state.elements.forEach(el=>{
+    const ex=ox+el.x, ey=oy+el.y;
+    const txt=resolve(el.content,row);
+    if(el.type==='text'){
+      if(txt==='') return;
+      const t=textLayout(doc,txt,el);
+      doc.setFont('helvetica',el.bold?'bold':'normal'); doc.setFontSize(t.fs);
+      const tx= el.align==='center'?ex+el.w/2 : el.align==='right'?ex+el.w : ex;
+      t.lines.forEach((ln,j)=>{ doc.text(ln,tx,ey+t.off+j*t.lh,{baseline:'top',align:el.align||'left'}); });
+    } else if(el.type==='barcode'){
+      const bc=barcodeRuns(txt,el.fmt);
+      if(!bc){ if(txt!=='') ctx.bad++; return; }
+      const th=bcTextHeight(el), bh=el.h-th-(th?0.4:0), mw=el.w/bc.total;
+      bc.runs.forEach(r=>{ doc.rect(ex+r[0]*mw,ey,r[1]*mw,bh,'F'); });
+      if(th){
+        doc.setFont('helvetica','normal'); doc.setFontSize(th*0.85/PT);
+        doc.text(String(txt),ex+el.w/2,ey+bh+0.4,{baseline:'top',align:'center'});
+      }
+    } else if(el.type==='qr'){
+      const q=qrModules(txt);
+      if(!q){ if(txt!=='') ctx.bad++; return; }
+      const size=Math.min(el.w,el.h), ms=size/(q.n+2);
+      const bx=ex+(el.w-size)/2, by=ey+(el.h-size)/2;
+      q.dark.forEach(p=>{ doc.rect(bx+(p[1]+1)*ms,by+(p[0]+1)*ms,ms+0.005,ms+0.005,'F'); });
+    } else if(el.type==='box'){
+      doc.setLineWidth(Math.max(el.lw||0.3,0.05));
+      if(el.h===0) doc.line(ex,ey,ex+el.w,ey); else doc.rect(ex,ey,el.w,el.h);
+    } else if(el.type==='symbol'){
+      drawSymbolPDF(doc,el,ex,ey);
+    }
+  });
+}
+async function exportPDF(){
+  const total=totalLabels();
+  if(!state.rows.length){ setStatus('Muat data terlebih dahulu.',true); return; }
+  if(!total){ setStatus('Jumlah cetak 0. Periksa kolom jumlah atau isi salinan minimal 1.',true); return; }
+  if(total>20000){ setStatus('Maksimal 20.000 label per PDF. Pecah data menjadi beberapa file.',true); return; }
+  const g=pageGeom(), btn=$('#export');
+  btn.disabled=true;
+  try{
+    const {jsPDF}=window.jspdf;
+    const orient=g.pw>g.ph?'l':'p';
+    const doc=new jsPDF({unit:'mm',format:[g.pw,g.ph],orientation:orient,compress:true});
+    const off = state.page.mode==='single' ? 0 : Math.min(state.page.offset|0,g.per-1);
+    const ctx={bad:0};
+    let slot=off, curPage=0, done=0;
+    for(const row of state.rows){
+      const n=qtyOf(row);
+      for(let k=0;k<n;k++){
+        const pg=Math.floor(slot/g.per), idx=slot%g.per;
+        if(pg>curPage){ doc.addPage([g.pw,g.ph],orient); curPage=pg; }
+        const c=idx%g.cols, r=Math.floor(idx/g.cols);
+        drawLabel(doc,row,g.ml+c*(state.label.w+g.gx),g.mt+r*(state.label.h+g.gy),ctx);
+        slot++; done++;
+        if(done%25===0){ setStatus('Membuat PDF… '+done+' / '+total); await new Promise(r=>setTimeout(r)); }
+      }
+    }
+    const blob=doc.output('blob');
+    const fname='label-'+new Date().toISOString().slice(0,10)+'.pdf';
+    let msg='PDF siap: '+total+' label, '+(curPage+1)+' halaman.';
+    if(ctx.bad) msg+=' '+ctx.bad+' barcode/QR dilewati karena isinya tidak valid.';
+    logHistory({template_name:state.curTemplate||'',dataset_name:state.isSample?'(data contoh)':(state.curDataset||''),total_labels:total,pages:curPage+1,
+      page_desc:(state.page.mode==='single'?'1 label/halaman, ':g.cols+'×'+g.rows+' label, ')+'kertas '+g.pw+'×'+g.ph+' mm, label '+state.label.w+'×'+state.label.h+' mm'});
+    let dl=null;
+    try{ dl = window.claude && window.claude.use ? await window.claude.use('downloads') : null; }catch(_){ dl=null; }
+    if(dl){
+      try{ await dl.save({filename:fname,data:blob}); setStatus(msg); }
+      catch(e){ setStatus(e && e.code==='declined' ? 'Unduhan dibatalkan.' : 'Gagal menyimpan: '+(e && e.message || e), true); }
+    } else {
+      doc.save(fname); setStatus(msg);
+    }
+  }catch(err){
+    setStatus('Gagal membuat PDF: '+(err && err.message ? err.message : err),true);
+  }finally{ btn.disabled=false; }
+}
+
+/* ---------- events ---------- */
+function initInputs(){
+  document.querySelectorAll('[data-path]').forEach(inp=>{
+    const v=getPath(inp.dataset.path);
+    if(inp.type==='checkbox') inp.checked=!!v; else inp.value=v;
+  });
+  toggleMode();
+}
+function toggleMode(){
+  $('#sheetOpts').classList.toggle('hide', state.page.mode==='single');
+  const custom=state.page.size==='Custom';
+  document.querySelectorAll('[data-path="page.w"],[data-path="page.h"]').forEach(i=>i.disabled=!custom);
+}
+document.addEventListener('input',e=>{
+  const t=e.target; if(!t.dataset || !t.dataset.path) return;
+  const p=t.dataset.path; let v;
+  if(t.type==='checkbox') v=t.checked;
+  else if(t.type==='number'){ v=parseFloat(t.value); if(isNaN(v)) return; if(['page.cols','page.rows','page.offset'].includes(p)) v=Math.max(0,Math.floor(v)); }
+  else v=t.value;
+  setPath(p,v);
+  if(p==='page.size' && PAGES[v]){ state.page.w=PAGES[v][0]; state.page.h=PAGES[v][1]; initInputs(); }
+  if(p==='page.mode') toggleMode();
+  update();
+});
+$('#props').addEventListener('input',e=>{
+  const t=e.target, k=t.dataset.k; if(!k) return;
+  const el=state.elements[state.sel]; if(!el) return;
+  let v;
+  if(t.type==='checkbox') v=t.checked;
+  else if(t.type==='number'){ v=parseFloat(t.value); if(isNaN(v)) return; }
+  else v=t.value;
+  el[k]=v;
+  if(k==='sym') el.style=symOf(el).style;
+  renderPreview(); renderList(); persist();
+});
+$('#props').addEventListener('click',e=>{
+  const chip=e.target.closest('[data-col]');
+  if(chip){
+    const ta=$('#props [data-k="content"]'), el=state.elements[state.sel]; if(!ta||!el) return;
+    const ins='{'+chip.dataset.col+'}', a=ta.selectionStart==null?ta.value.length:ta.selectionStart, b=ta.selectionEnd==null?a:ta.selectionEnd;
+    ta.value=ta.value.slice(0,a)+ins+ta.value.slice(b); el.content=ta.value;
+    ta.focus(); ta.selectionStart=ta.selectionEnd=a+ins.length;
+    renderPreview(); renderList(); persist(); return;
+  }
+  const symChip=e.target.closest('[data-sym]');
+  if(symChip){
+    const el=state.elements[state.sel]; if(!el) return;
+    el.sym=symChip.dataset.sym;
+    el.style=symOf(el).style;
+    renderProps(); renderPreview(); renderList(); persist(); return;
+  }
+  const act=e.target.closest('[data-act]'); if(!act) return;
+  if(act.dataset.act==='del'){
+    state.elements.splice(state.sel,1); state.sel=Math.max(0,state.sel-1);
+    renderList(); renderProps(); renderPreview(); persist();
+  } else if(act.dataset.act==='dup'){
+    const c=Object.assign({},state.elements[state.sel],{id:uid++,x:state.elements[state.sel].x+2,y:state.elements[state.sel].y+2});
+    state.elements.push(c); state.sel=state.elements.length-1;
+    renderList(); renderProps(); renderPreview(); persist();
+  }
+});
+$('#elList').addEventListener('click',e=>{
+  const b=e.target.closest('.item'); if(!b) return;
+  state.sel=+b.dataset.i; renderList(); renderProps(); renderPreview();
+});
+document.querySelectorAll('[data-add]').forEach(b=>b.addEventListener('click',()=>addEl(b.dataset.add)));
+$('#file').addEventListener('change',e=>{ const f=e.target.files[0]; if(f) loadFile(f); e.target.value=''; });
+$('#sheet').addEventListener('change',e=>{ applySheet(e.target.value); renderData(); update(); });
+$('#qtyCol').addEventListener('change',e=>{ state.qtyCol=e.target.value; renderData(); update(); });
+$('#copies').addEventListener('input',e=>{ const v=parseInt(e.target.value,10); if(v>0){ state.copies=Math.min(v,9999); update(); } });
+$('#prev').addEventListener('click',()=>{ if(state.rows.length){ state.rowIdx=(state.rowIdx-1+state.rows.length)%state.rows.length; renderPreview(); } });
+$('#next').addEventListener('click',()=>{ if(state.rows.length){ state.rowIdx=(state.rowIdx+1)%state.rows.length; renderPreview(); } });
+$('#export').addEventListener('click',exportPDF);
+$('#reset').addEventListener('click',()=>{
+  const d=defaultTemplate();
+  state.page=d.page; state.label=d.label; state.elements=d.elements.map(e=>Object.assign({id:uid++},e)); state.sel=0; state.curTemplate='';
+  initInputs(); renderProps(); update();
+});
+document.addEventListener('keydown',e=>{
+  const tg=e.target; if(tg && /^(INPUT|TEXTAREA|SELECT)$/.test(tg.tagName)) return;
+  const el=state.elements[state.sel]; if(!el) return;
+  const st=e.shiftKey?2:0.5; let used=true;
+  if(e.key==='ArrowLeft') el.x-=st; else if(e.key==='ArrowRight') el.x+=st;
+  else if(e.key==='ArrowUp') el.y-=st; else if(e.key==='ArrowDown') el.y+=st;
+  else used=false;
+  if(used){ e.preventDefault(); renderPreview(); syncPos(); persist(); }
+});
+if(window.ResizeObserver) new ResizeObserver(()=>{ if(!drag) renderPreview(); }).observe($('#mat'));
+else window.addEventListener('resize',renderPreview);
+
+/* ---------- penyimpanan SQLite (backend) ---------- */
+let dbOn=false;
+async function api(path,opt){
+  const o=Object.assign({},opt||{});
+  if(o.body && typeof o.body!=='string') o.body=JSON.stringify(o.body);
+  o.headers=Object.assign({'Content-Type':'application/json'},o.headers||{});
+  const r=await fetch('/api'+path,o);
+  let data=null; try{ data=await r.json(); }catch(_){}
+  if(!r.ok) throw new Error((data && data.error) || r.statusText || 'Permintaan gagal');
+  return data;
+}
+function fillSelect(sel,items,labelFn,emptyText){
+  const prev=sel.value;
+  sel.innerHTML = items.length
+    ? items.map(it=>'<option value="'+it.id+'">'+esc(labelFn(it))+'</option>').join('')
+    : '<option value="">'+emptyText+'</option>';
+  if(items.some(it=>String(it.id)===prev)) sel.value=prev;
+}
+function selName(sel){ const o=sel.options[sel.selectedIndex]; return o && sel.value ? o.textContent.replace(/ \(\d+ baris\)$/,'') : ''; }
+async function refreshDb(){
+  try{
+    const [t,d,h]=await Promise.all([api('/templates'),api('/datasets'),api('/history')]);
+    fillSelect($('#tplSel'),t,x=>x.name,'(belum ada templat)');
+    fillSelect($('#dsSel'),d,x=>x.name+' ('+x.row_count+' baris)','(belum ada data)');
+    $('#histList').innerHTML = h.length ? h.map(x=>{
+      const dt=new Date(x.printed_at); const when=isNaN(dt)?x.printed_at:dt.toLocaleString('id-ID');
+      return '<div class="hrow"><b>'+x.total_labels+' label</b>, '+x.pages+' halaman<br>'
+        +'<span class="muted">'+esc(when)+'<br>Data: '+esc(x.dataset_name||'-')+' · Templat: '+esc(x.template_name||'-')+'<br>'+esc(x.page_desc||'')+'</span></div>';
+    }).join('') : '<p class="muted small">Belum ada riwayat.</p>';
+  }catch(e){ setStatus('Gagal memuat daftar dari database: '+e.message,true); }
+}
+function applyTemplate(o){
+  Object.assign(state.page,defaultTemplate().page,o.page);
+  Object.assign(state.label,o.label);
+  state.elements=o.elements.map(e=>Object.assign({id:uid++},e));
+  if(typeof o.copies==='number') state.copies=o.copies;
+  state.sel=0;
+  initInputs(); renderData(); renderProps(); update();
+}
+function applyDataset(d){
+  const rows=d.rows.map(r=>{ const o={}; d.columns.forEach((c,i)=>{ o[c]=r[i]==null?'':String(r[i]); }); return o; });
+  state.source={names:['Data'],sheets:{Data:[d.columns].concat(d.rows)},current:'Data'};
+  state.columns=d.columns; state.rows=rows; state.rowIdx=0; state.isSample=false;
+  if(state.qtyCol && !d.columns.includes(state.qtyCol)) state.qtyCol='';
+  state.curDataset=d.name; $('#dsName').value=d.name;
+  renderData(); update();
+}
+async function logHistory(entry){
+  if(!dbOn) return;
+  try{ await api('/history',{method:'POST',body:entry}); refreshDb(); }catch(_){}
+}
+async function initDb(){
+  try{ await api('/health'); }catch(_){ return; }
+  dbOn=true; $('#dbSec').classList.remove('hide');
+  $('#tplSel').addEventListener('change',()=>{ const n=selName($('#tplSel')); if(n) $('#tplName').value=n; });
+  $('#dsSel').addEventListener('change',()=>{ const n=selName($('#dsSel')); if(n) $('#dsName').value=n; });
+  $('#tplSave').addEventListener('click',async()=>{
+    const name=$('#tplName').value.trim();
+    if(!name){ setStatus('Isi nama templat terlebih dahulu.',true); return; }
+    try{
+      const data={page:state.page,label:state.label,copies:state.copies,elements:state.elements.map(e=>{ const c=Object.assign({},e); delete c.id; return c; })};
+      await api('/templates',{method:'POST',body:{name,data}});
+      state.curTemplate=name; setStatus('Templat "'+name+'" tersimpan.'); await refreshDb();
+    }catch(e){ setStatus('Gagal menyimpan templat: '+e.message,true); }
+  });
+  $('#tplLoad').addEventListener('click',async()=>{
+    const id=$('#tplSel').value; if(!id) return;
+    try{
+      const t=await api('/templates/'+id); applyTemplate(t.data);
+      state.curTemplate=t.name; $('#tplName').value=t.name; setStatus('Templat "'+t.name+'" dimuat.');
+    }catch(e){ setStatus('Gagal memuat templat: '+e.message,true); }
+  });
+  $('#tplDel').addEventListener('click',async()=>{
+    const id=$('#tplSel').value; if(!id) return;
+    if(!confirm('Hapus templat "'+selName($('#tplSel'))+'"?')) return;
+    try{ await api('/templates/'+id,{method:'DELETE'}); setStatus('Templat dihapus.'); await refreshDb(); }
+    catch(e){ setStatus('Gagal menghapus: '+e.message,true); }
+  });
+  $('#dsSave').addEventListener('click',async()=>{
+    const name=$('#dsName').value.trim();
+    if(!name){ setStatus('Isi nama data terlebih dahulu.',true); return; }
+    if(!state.rows.length){ setStatus('Belum ada data untuk disimpan.',true); return; }
+    try{
+      const rows=state.rows.map(r=>state.columns.map(c=>r[c]==null?'':r[c]));
+      const res=await api('/datasets',{method:'POST',body:{name,columns:state.columns,rows}});
+      state.curDataset=name; state.isSample=false; renderData();
+      setStatus('Data "'+name+'" tersimpan ('+res.row_count+' baris).'); await refreshDb();
+    }catch(e){ setStatus('Gagal menyimpan data: '+e.message,true); }
+  });
+  $('#dsLoad').addEventListener('click',async()=>{
+    const id=$('#dsSel').value; if(!id) return;
+    try{ const d=await api('/datasets/'+id); applyDataset(d); setStatus('Data "'+d.name+'" dimuat ('+d.rows.length+' baris).'); }
+    catch(e){ setStatus('Gagal memuat data: '+e.message,true); }
+  });
+  $('#dsDel').addEventListener('click',async()=>{
+    const id=$('#dsSel').value; if(!id) return;
+    if(!confirm('Hapus data "'+selName($('#dsSel'))+'"?')) return;
+    try{ await api('/datasets/'+id,{method:'DELETE'}); setStatus('Data dihapus.'); await refreshDb(); }
+    catch(e){ setStatus('Gagal menghapus: '+e.message,true); }
+  });
+  $('#histClear').addEventListener('click',async()=>{
+    if(!confirm('Hapus seluruh riwayat cetak?')) return;
+    try{ await api('/history',{method:'DELETE'}); await refreshDb(); }catch(e){ setStatus('Gagal: '+e.message,true); }
+  });
+  refreshDb();
+}
+
+/* ---------- init ---------- */
+loadSaved();
+state.source={names:['Data'],sheets:{Data:[SAMPLE.cols].concat(SAMPLE.rows)},current:'Data'};
+applySheet('Data');
+initInputs(); renderData(); renderProps(); update();
+initDb();
+})();
+</script>
+</body>
+</html>
