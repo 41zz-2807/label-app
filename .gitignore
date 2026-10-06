@@ -5,3 +5,7 @@ data/*.db-shm
 
 # pustaka JS yang diunduh otomatis saat build
 static/vendor/
+
+# cache Python
+__pycache__/
+*.pyc

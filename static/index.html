@@ -133,6 +133,8 @@ details.hist summary{cursor:pointer;color:var(--muted);font-size:12.5px}
       </label>
       <div class="stack" style="margin-top:10px">
         <div id="dataInfo" class="small"></div>
+        <div class="inline"><button class="btn sm" id="xdata" title="Ekspor tabel data ke .xlsx (semua sheet)">Ekspor Excel</button>
+          <button class="btn sm" id="xcsv" title="Ekspor tabel data ke .csv (sheet pertama)">Ekspor CSV</button></div>
         <label class="f hide" id="sheetWrap"><span>Sheet</span><select id="sheet"></select></label>
         <div class="grid2">
           <label class="f"><span>Jumlah cetak per baris</span>
@@ -242,6 +244,7 @@ details.hist summary{cursor:pointer;color:var(--muted);font-size:12.5px}
         <button class="btn" id="next" aria-label="Baris berikutnya">&rsaquo;</button>
       </div>
       <button class="btn primary" id="export">Buat PDF</button>
+      <button class="btn" id="ximg" title="Satu baris Excel per baris data; kolom pertama berisi gambar label beserta barcode">Buat Excel + barcode</button>
     </div>
     <div class="mat" id="mat"></div>
     <div id="status" class="status" role="status" aria-live="polite"></div>
@@ -449,19 +452,23 @@ function symGeom(el){
   const ox=a?(el.w-size)/2:0, oy=a?(el.h-size)/2:0;
   return s.subs.map(u=>({closed:u.closed, p:u.p.map(pt=>[ox+pt[0]*sx, oy+pt[1]*sy])}));
 }
-function symbolSVG(el,scale){
-  const g=symGeom(el), st=symStyle(el), lw=symLw(el);
+function symbolPath(el){
+  const st=symStyle(el), lw=symLw(el);
   const w=Math.max(el.w,0.01), h=Math.max(el.h,0.01);
-  const d=g.map(u=>{
+  const d=symGeom(el).map(u=>{
     const close=u.closed||st!=='S';
     let out='M'+u.p[0][0].toFixed(3)+' '+u.p[0][1].toFixed(3);
     for(let i=1;i<u.p.length;i++) out+='L'+u.p[i][0].toFixed(3)+' '+u.p[i][1].toFixed(3);
     return out+(close?'Z':'');
   }).join(' ');
   const fill=st!=='S'?'#000':'none', stroke=st!=='F'?'#000':'none';
+  return '<path d="'+d+'" fill="'+fill+'" fill-rule="nonzero"'
+    +' stroke="'+stroke+'" stroke-width="'+lw+'" stroke-linecap="round" stroke-linejoin="round"/>';
+}
+function symbolSVG(el,scale){
+  const w=Math.max(el.w,0.01), h=Math.max(el.h,0.01);
   return '<svg style="left:0;top:0" width="'+(w*scale)+'" height="'+(h*scale)+'" viewBox="0 0 '+w+' '+h+'"'
-    +' preserveAspectRatio="none" aria-hidden="true"><path d="'+d+'" fill="'+fill+'" fill-rule="nonzero"'
-    +' stroke="'+stroke+'" stroke-width="'+lw+'" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    +' preserveAspectRatio="none" aria-hidden="true">'+symbolPath(el)+'</svg>';
 }
 
 /* ---------- data loading ---------- */
@@ -825,6 +832,149 @@ async function exportPDF(){
   }finally{ btn.disabled=false; }
 }
 
+/* ---------- ekspor ke Excel ---------- */
+const SVG_FONT="Helvetica,Arial,'Liberation Sans',sans-serif";
+const XLSX_MAX_IMAGES=300, XLSX_DPI=200;
+const stamp=()=>new Date().toISOString().slice(0,10);
+
+/* Satu label sebagai SVG mandiri (satuan mm), barcode/QR ikut jadi vektor.
+   Memakai textLayout & symGeom yang sama dengan pratinjau dan PDF. */
+function labelSVG(row){
+  const L=state.label, out=[];
+  if(state.page.border) out.push('<rect x="0" y="0" width="'+L.w+'" height="'+L.h+'" fill="none" stroke="#8c8c8c" stroke-width="0.1"/>');
+  state.elements.forEach(el=>{
+    const ex=el.x, ey=el.y, txt=resolve(el.content,row);
+    if(el.type==='text'){
+      if(txt==='') return;
+      const t=textLayout(md(),txt,el);
+      const anch=el.align==='center'?'middle':el.align==='right'?'end':'start';
+      const tx=anch==='middle'?ex+el.w/2 : anch==='end'?ex+el.w : ex;
+      t.lines.forEach((ln,j)=>{
+        out.push('<text x="'+tx+'" y="'+(ey+t.off+j*t.lh)+'" font-family="'+SVG_FONT+'"'
+          +' font-size="'+(t.fs*PT).toFixed(3)+'" font-weight="'+(el.bold?'bold':'normal')+'"'
+          +' text-anchor="'+anch+'" dominant-baseline="text-before-edge" xml:space="preserve">'+esc(ln)+'</text>');
+      });
+    } else if(el.type==='barcode'){
+      const bc=barcodeRuns(txt,el.fmt);
+      if(!bc) return;
+      const th=bcTextHeight(el), bh=el.h-th-(th?0.4:0), mw=el.w/bc.total;
+      const bars=bc.runs.map(r=>'<rect x="'+(r[0]*mw).toFixed(3)+'" y="0" width="'+(r[1]*mw).toFixed(3)+'" height="'+bh.toFixed(3)+'"/>').join('');
+      out.push('<g transform="translate('+ex+' '+ey+')" fill="#000">'+bars+'</g>');
+      if(th) out.push('<text x="'+(ex+el.w/2)+'" y="'+(ey+bh+0.4)+'" font-family="'+SVG_FONT+'"'
+        +' font-size="'+(th*0.85).toFixed(3)+'" text-anchor="middle" dominant-baseline="text-before-edge">'+esc(txt)+'</text>');
+    } else if(el.type==='qr'){
+      const q=qrModules(txt);
+      if(!q) return;
+      const size=Math.min(el.w,el.h), ms=size/(q.n+2);
+      const bx=ex+(el.w-size)/2, by=ey+(el.h-size)/2;
+      out.push('<path fill="#000" d="'+q.dark.map(p=>'M'+((p[1]+1)*ms+bx).toFixed(3)+' '+((p[0]+1)*ms+by).toFixed(3)
+        +'h'+ms.toFixed(3)+'v'+ms.toFixed(3)+'h'+(-ms).toFixed(3)+'z').join('')+'"/>');
+    } else if(el.type==='box'){
+      const lw=Math.max(el.lw||0.3,0.05);
+      if(el.h===0) out.push('<line x1="'+ex+'" y1="'+ey+'" x2="'+(ex+el.w)+'" y2="'+ey+'" stroke="#000" stroke-width="'+lw+'"/>');
+      else out.push('<rect x="'+ex+'" y="'+ey+'" width="'+el.w+'" height="'+el.h+'" fill="none" stroke="#000" stroke-width="'+lw+'"/>');
+    } else if(el.type==='symbol'){
+      out.push('<g transform="translate('+ex+' '+ey+')">'+symbolPath(el)+'</g>');
+    }
+  });
+  return '<svg xmlns="http://www.w3.org/2000/svg" width="'+L.w+'mm" height="'+L.h+'mm" viewBox="0 0 '+L.w+' '+L.h+'">'
+    +'<rect x="0" y="0" width="'+L.w+'" height="'+L.h+'" fill="#fff"/>'+out.join('')+'</svg>';
+}
+
+/* SVG -> PNG lewat canvas (butuh <img> + canvas, كلها bawaan browser) */
+function svgPNG(svg,mmW,mmH,dpi){
+  return new Promise((res,rej)=>{
+    const img=new Image();
+    img.onload=()=>{
+      try{
+        const c=document.createElement('canvas');
+        c.width=Math.max(1,Math.round(mmW/25.4*dpi)); c.height=Math.max(1,Math.round(mmH/25.4*dpi));
+        const g=c.getContext('2d');
+        g.fillStyle='#fff'; g.fillRect(0,0,c.width,c.height);
+        g.drawImage(img,0,0,c.width,c.height);
+        res(c.toDataURL('image/png'));
+      }catch(e){ rej(e); }
+    };
+    img.onerror=()=>rej(new Error('Gambar label gagal dirender.'));
+    img.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg);
+  });
+}
+function saveBlob(blob,fname){
+  const url=URL.createObjectURL(blob), a=document.createElement('a');
+  a.href=url; a.download=fname; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),5000);
+}
+/* angka jadi angka (bisa dijumlahkan di Excel); kode ber-nol tetap teks */
+function cellValue(v){
+  if(v==null) return '';
+  if(typeof v!=='string') return v;
+  const s=v.trim();
+  if(!s) return '';
+  return /^-?(0|[1-9]\d{0,14})(\.\d+)?$/.test(s) ? Number(s) : v;
+}
+function sheetName(name,used){
+  let s=String(name||'Data').replace(/[\[\]:*?\/\\]/g,'_').slice(0,31) || 'Data';
+  let i=2, base=s;
+  while(used.has(s)){ const suf=' ('+(i++)+')'; s=base.slice(0,31-suf.length)+suf; }
+  used.add(s);
+  return s;
+}
+/* ekspor tabel data saja: semua sheet ikut, sesuai file asal */
+function exportData(kind){
+  try{
+    const names=state.source.names && state.source.names.length ? state.source.names : ['Data'];
+    const wb=XLSX.utils.book_new(), used=new Set();
+    names.forEach(n=>{
+      const aoa=(state.source.sheets[n]||[]).map(row=>row.map(cellValue));
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), sheetName(n,used));
+    });
+    const fname='data-'+(state.curDataset||stamp())+(kind==='csv'?'.csv':'.xlsx');
+    XLSX.writeFile(wb, fname);
+    setStatus('Data diekspor: '+fname+' ('+names.length+' sheet, '+state.rows.length+' baris).');
+  }catch(err){
+    setStatus('Gagal mengekspor data: '+(err&&err.message?err.message:err),true);
+  }
+}
+/* ekspor desain: satu baris Excel per baris data, kolom A berisi gambar label
+   (barcode/QR ikut sebagai gambar), sisanya kolom data + jumlah cetak. */
+async function exportDesignXlsx(){
+  if(!state.rows.length){ setStatus('Muat data terlebih dahulu.',true); return; }
+  let limit=state.rows.length;
+  if(limit>XLSX_MAX_IMAGES){
+    setStatus('Data '+limit+' baris melebihi batas '+XLSX_MAX_IMAGES+' gambar per file.',true);
+    if(!confirm('Maksimal '+XLSX_MAX_IMAGES+' gambar per file Excel.\nEkspor '+XLSX_MAX_IMAGES+' baris pertama saja?')) return;
+    limit=XLSX_MAX_IMAGES;
+  }
+  const btn=$('#ximg'); btn.disabled=true;
+  const cols=['#','jumlah_cetak'].concat(state.columns);
+  try{
+    const rows=[], images=[];
+    for(let i=0;i<limit;i++){
+      const row=state.rows[i];
+      rows.push([String(i+1), qtyOf(row)].concat(state.columns.map(c=>cellValue(row[c]))));
+      images.push(await svgPNG(labelSVG(row),state.label.w,state.label.h,XLSX_DPI));
+      if((i+1)%10===0){
+        setStatus('Merender gambar label… '+(i+1)+' / '+limit);
+        await new Promise(r=>setTimeout(r));
+      }
+    }
+    for(let i=limit;i<state.rows.length;i++){ rows.push([String(i+1), qtyOf(state.rows[i])].concat(state.columns.map(c=>cellValue(state.rows[i][c])))); images.push(null); }
+    setStatus('Menyusun file Excel…');
+    const res=await fetch('/api/xlsx',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({filename:'label-'+stamp()+'.xlsx', label:{w:state.label.w,h:state.label.h},
+                            columns:cols, rows:rows, images:images})});
+    if(!res.ok){
+      let msg='Gagal membuat file Excel.';
+      try{ const j=await res.json(); if(j&&j.error) msg=j.error; }catch(_){}
+      throw new Error(msg);
+    }
+    saveBlob(await res.blob(),'label-'+stamp()+'.xlsx');
+    setStatus('Excel siap: '+limit+' gambar label (kerapatan '+XLSX_DPI+' dpi) + '+cols.length+' kolom data.');
+  }catch(err){
+    setStatus('Gagal mengekspor desain: '+(err&&err.message?err.message:err),true);
+  }finally{ btn.disabled=false; }
+}
+
 /* ---------- events ---------- */
 function initInputs(){
   document.querySelectorAll('[data-path]').forEach(inp=>{
@@ -898,6 +1048,9 @@ $('#copies').addEventListener('input',e=>{ const v=parseInt(e.target.value,10); 
 $('#prev').addEventListener('click',()=>{ if(state.rows.length){ state.rowIdx=(state.rowIdx-1+state.rows.length)%state.rows.length; renderPreview(); } });
 $('#next').addEventListener('click',()=>{ if(state.rows.length){ state.rowIdx=(state.rowIdx+1)%state.rows.length; renderPreview(); } });
 $('#export').addEventListener('click',exportPDF);
+$('#ximg').addEventListener('click',exportDesignXlsx);
+$('#xdata').addEventListener('click',()=>exportData('xlsx'));
+$('#xcsv').addEventListener('click',()=>exportData('csv'));
 $('#reset').addEventListener('click',()=>{
   const d=defaultTemplate();
   state.page=d.page; state.label=d.label; state.elements=d.elements.map(e=>Object.assign({id:uid++},e)); state.sel=0; state.curTemplate='';

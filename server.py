@@ -5,11 +5,15 @@
 - REST API sederhana di /api/* dengan database SQLite
 - Hanya memakai pustaka standar Python (tanpa pip install)
 """
+import base64
+import binascii
+import io
 import json
 import mimetypes
 import os
 import sqlite3
 import sys
+import zipfile
 from contextlib import closing
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -91,6 +95,13 @@ def clean_name(value):
 def to_int(value, default=0):
     try:
         return max(0, int(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def to_float(value, default=0.0):
+    try:
+        return float(value)
     except (TypeError, ValueError):
         return default
 
@@ -190,6 +201,243 @@ def delete_row(conn, table, rid):
     return {"ok": True}
 
 
+# ---------------------------------------------------------------- XLSX
+# Penulis .xlsx minimal memakai pustaka standar: gambar label (PNG hasil render
+# SVG di browser) ditanamkan sebagai gambar di dalam sel sheet.
+XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+MAX_XLSX_IMAGES = 300
+MAX_XLSX_ROWS = 20_000
+EMU_PER_MM = 36_000
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+
+_XL_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+_OFF_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+_DRAW_NS = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
+_ART_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
+
+
+def xml_escape(value):
+    """Escape teks untuk XML; buang karakter kontrol yang tidak sah."""
+    out = []
+    for ch in str(value):
+        code = ord(ch)
+        if code < 0x20 and ch not in "\t\n":
+            continue
+        if code == 0x7F:
+            continue
+        if ch == "&":
+            out.append("&amp;")
+        elif ch == "<":
+            out.append("&lt;")
+        elif ch == ">":
+            out.append("&gt;")
+        elif ch == '"':
+            out.append("&quot;")
+        elif ch == "'":
+            out.append("&apos;")
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def col_letter(index):
+    """0 -> A, 25 -> Z, 26 -> AA."""
+    name = ""
+    n = index + 1
+    while n:
+        n, rem = divmod(n - 1, 26)
+        name = chr(65 + rem) + name
+    return name
+
+
+def _cell_xml(ref, value, bold=False):
+    style = ' s="1"' if bold else ""
+    if isinstance(value, bool):
+        return '<c r="%s"%s t="inlineStr"><is><t>%s</t></is></c>' % (ref, style, "TRUE" if value else "FALSE")
+    if isinstance(value, (int, float)):
+        return '<c r="%s"%s><v>%s</v></c>' % (ref, style, repr(value))
+    text = xml_escape(value if value is not None else "")
+    return '<c r="%s"%s t="inlineStr"><is><t xml:space="preserve">%s</t></is></c>' % (ref, style, text)
+
+
+def _sheet_xml(header, rows, col_widths, row_heights, has_drawing):
+    parts = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+             '<worksheet xmlns="%s" xmlns:r="%s">' % (_XL_NS, _OFF_NS)]
+    cols = ['<col min="%d" max="%d" width="%.2f" customWidth="1"/>' % (i + 1, i + 1, w)
+            for i, w in enumerate(col_widths)]
+    if cols:
+        parts.append("<cols>%s</cols>" % "".join(cols))
+    parts.append("<sheetData>")
+    head_cells = "".join(_cell_xml("%s1" % col_letter(i), h, bold=True) for i, h in enumerate(header))
+    parts.append('<row r="1">%s</row>' % head_cells)
+    for r, values in enumerate(rows):
+        row_no = r + 2
+        cells = "".join(_cell_xml("%s%d" % (col_letter(c), row_no), v) for c, v in enumerate(values))
+        height = row_heights.get(r)
+        attr = ' ht="%.2f" customHeight="1"' % height if height else ""
+        parts.append('<row r="%d"%s>%s</row>' % (row_no, attr, cells))
+    parts.append("</sheetData>")
+    if has_drawing:
+        parts.append('<drawing r:id="rId1"/>')
+    parts.append("</worksheet>")
+    return "".join(parts)
+
+
+def _drawing_xml(images):
+    """images: daftar (row_index_0_based, bytes_png, mm_w, mm_h)."""
+    parts = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+             '<xdr:wsDr xmlns:xdr="%s" xmlns:a="%s" xmlns:r="%s">' % (_DRAW_NS, _ART_NS, _OFF_NS)]
+    for i, (row_index, _png, mm_w, mm_h) in enumerate(images):
+        parts.append(
+            "<xdr:oneCellAnchor>"
+            "<xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff>"
+            "<xdr:row>%d</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>"
+            '<xdr:ext cx="%d" cy="%d"/>'
+            "<xdr:pic>"
+            '<xdr:nvPicPr><xdr:cNvPr id="%d" name="Label %d"/><xdr:cNvPicPr/></xdr:nvPicPr>'
+            '<xdr:blipFill><a:blip r:embed="rId%d"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill>'
+            '<xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="%d" cy="%d"/></a:xfrm>'
+            "<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></xdr:spPr>"
+            "</xdr:pic><xdr:clientData/></xdr:oneCellAnchor>"
+            % (row_index + 1, EMU_PER_MM * int(round(mm_w)), EMU_PER_MM * int(round(mm_h)),
+               i + 1, i + 1, i + 1, EMU_PER_MM * int(round(mm_w)), EMU_PER_MM * int(round(mm_h))))
+    parts.append("</xdr:wsDr>")
+    return "".join(parts)
+
+
+def build_xlsx(header, rows, images=(), label_mm=None, sheet_name="Label"):
+    """Susun file .xlsx (bytes).
+
+    header : list[str]  judul kolom
+    rows   : list[list] nilai sel (selaras dengan header)
+    images : list[(row_index_0_based, png_bytes, mm_w, mm_h)]  gambar untuk sel kolom pertama
+    """
+    images = list(images)
+    has_drawing = bool(images)
+    mm_w, mm_h = label_mm if label_mm else (0, 0)
+    # lebar kolom & tinggi baris supaya kolom gambar +- pas dengan ukuran label
+    px_w = mm_w / 25.4 * 96 if mm_w else 0
+    px_h = mm_h / 25.4 * 96 if mm_h else 0
+    col_widths = [round(px_w / 7.0, 2) if px_w else 12.0] + [14.0] * max(len(header) - 1, 0)
+    row_heights = {i: round(px_h * 0.75, 2) for i, _p, _w, _h in images if px_h}
+
+    parts = [
+        ("[Content_Types].xml",
+         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+         '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+         '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+         '<Default Extension="xml" ContentType="application/xml"/>'
+         '<Default Extension="png" ContentType="image/png"/>'
+         '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+         '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+         '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
+         + ('<Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>'
+            if has_drawing else "") + "</Types>"),
+        ("_rels/.rels",
+         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+         '<Relationships xmlns="%s">'
+         '<Relationship Id="rId1" Type="%s/officeDocument" Target="xl/workbook.xml"/>'
+         "</Relationships>" % (_REL_NS, _OFF_NS)),
+        ("xl/workbook.xml",
+         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+         '<workbook xmlns="%s" xmlns:r="%s"><sheets><sheet name="%s" sheetId="1" r:id="rId1"/></sheets></workbook>'
+         % (_XL_NS, _OFF_NS, xml_escape(sheet_name))),
+        ("xl/_rels/workbook.xml.rels",
+         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+         '<Relationships xmlns="%s">'
+         '<Relationship Id="rId1" Type="%s/worksheet" Target="worksheets/sheet1.xml"/>'
+         '<Relationship Id="rId2" Type="%s/styles" Target="styles.xml"/>'
+         "</Relationships>" % (_REL_NS, _OFF_NS, _OFF_NS)),
+        ("xl/styles.xml",
+         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+         '<styleSheet xmlns="%s">'
+         '<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font>'
+         '<font><b/><sz val="11"/><name val="Calibri"/></font></fonts>'
+         '<fills count="2"><fill><patternFill patternType="none"/></fill>'
+         '<fill><patternFill patternType="gray125"/></fill></fills>'
+         '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>'
+         '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+         '<cellXfs count="2">'
+         '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
+         '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>'
+         "</cellXfs>"
+         '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
+         "</styleSheet>" % _XL_NS),
+        ("xl/worksheets/sheet1.xml",
+         _sheet_xml(header, rows, col_widths, row_heights, has_drawing)),
+    ]
+    if has_drawing:
+        parts.append(("xl/worksheets/_rels/sheet1.xml.rels",
+                      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                      '<Relationships xmlns="%s">'
+                      '<Relationship Id="rId1" Type="%s/drawing" Target="../drawings/drawing1.xml"/>'
+                      "</Relationships>" % (_REL_NS, _OFF_NS)))
+        parts.append(("xl/drawings/drawing1.xml", _drawing_xml(images)))
+        parts.append(("xl/drawings/_rels/drawing1.xml.rels",
+                      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                      '<Relationships xmlns="%s">%s</Relationships>'
+                      % (_REL_NS, "".join(
+                          '<Relationship Id="rId%d" Type="%s/image" Target="../media/image%d.png"/>'
+                          % (i + 1, _OFF_NS, i + 1) for i in range(len(images))))))
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, data in parts:
+            zf.writestr(name, data.encode("utf-8"))
+        for i, (_row, png, _w, _h) in enumerate(images):
+            zf.writestr("xl/media/image%d.png" % (i + 1), png)
+    return buf.getvalue()
+
+
+def xlsx_report(body):
+    """POST /api/xlsx -> (bytes, filename) dari kiriman browser."""
+    columns = body.get("columns")
+    rows = body.get("rows")
+    images = body.get("images") or []
+    if not isinstance(columns, list) or not columns or len(columns) > 300 \
+            or not all(isinstance(c, str) for c in columns):
+        raise ApiError(400, "Daftar kolom tidak valid.")
+    if not isinstance(rows, list) or len(rows) > MAX_XLSX_ROWS:
+        raise ApiError(400, "Baris data tidak valid (maksimal %d baris)." % MAX_XLSX_ROWS)
+    for r in rows:
+        if not isinstance(r, list) or len(r) != len(columns):
+            raise ApiError(400, "Jumlah kolom tiap baris harus sama dengan judul kolom.")
+    if not isinstance(images, list) or len(images) != len(rows):
+        raise ApiError(400, "Jumlah gambar harus sama dengan jumlah baris.")
+    label = body.get("label") or {}
+    mm_w = to_float(label.get("w")) or 0.0
+    mm_h = to_float(label.get("h")) or 0.0
+    if mm_w <= 0 or mm_h <= 0 or mm_w > 2000 or mm_h > 2000:
+        raise ApiError(400, "Ukuran label tidak valid.")
+
+    packed = []
+    for index, item in enumerate(images):
+        if not item:
+            continue
+        if not isinstance(item, str):
+            raise ApiError(400, "Gambar harus berupa data base64 PNG.")
+        raw = item.split(",", 1)[1] if item.startswith("data:") else item
+        try:
+            png = base64.b64decode(raw, validate=True)
+        except (ValueError, binascii.Error):
+            raise ApiError(400, "Gambar PNG tidak valid pada baris %d." % (index + 1))
+        if not png.startswith(PNG_MAGIC):
+            raise ApiError(400, "Gambar bukan PNG pada baris %d." % (index + 1))
+        if len(packed) >= MAX_XLSX_IMAGES:
+            raise ApiError(400, "Maksimal %d gambar per file Excel." % MAX_XLSX_IMAGES)
+        packed.append((index, png, mm_w, mm_h))
+
+    header = ["Label"] + list(columns)
+    body_rows = []
+    for i, values in enumerate(rows):
+        body_rows.append([None] + list(values))
+    name = clean_name(body.get("filename") or "label") or "label"
+    if not name.lower().endswith(".xlsx"):
+        name += ".xlsx"
+    return build_xlsx(header, body_rows, packed, (mm_w, mm_h)), name
+
+
 # ---------------------------------------------------------------- HTTP
 class Handler(BaseHTTPRequestHandler):
     server_version = "LabelApp/1.0"
@@ -206,6 +454,17 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
+
+    def send_bytes(self, data, ctype, filename=None):
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        if filename:
+            self.send_header("Content-Disposition",
+                             'attachment; filename="%s"' % filename.replace('"', ""))
+        self.end_headers()
+        self.wfile.write(data)
 
     def read_json(self):
         length = to_int(self.headers.get("Content-Length"))
@@ -262,6 +521,10 @@ class Handler(BaseHTTPRequestHandler):
     def handle_api(self, method):
         path = urlparse(self.path).path
         try:
+            if method == "POST" and path.rstrip("/") == "/api/xlsx":
+                data, filename = xlsx_report(self.read_json())
+                self.send_bytes(data, XLSX_MIME, filename)
+                return
             self.send_json(200, self.api(method, path))
         except ApiError as e:
             self.send_json(e.status, {"error": e.message})
