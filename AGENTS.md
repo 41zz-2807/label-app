@@ -75,8 +75,13 @@ docker compose up -d --build      # bangun ulang setelah mengubah kode
   file Excel, 20.000 baris per file Excel, body request 64 MB.
 - Pratinjau, PDF, **dan ekspor Excel** harus selalu memakai perhitungan teks yang sama
   (`textLayout`), kalau tidak baris akan meleset antara layar dan hasil cetak.
+- `elementSVG()` dipakai bersama oleh `labelSVG()` (gambar label utuh) dan `codeSVG()`
+  (barcode/QR saja) — jangan menggambar ulang di tempat lain.
 - `POST /api/xlsx` mengembalikan biner, jadi tidak boleh lewat `send_json()` yang biasa;
   jalur JSON di `api()` tidak boleh ikut mengubahnya.
+- Ukuran gambar di `.xlsx` ditulis dalam EMU (`EMU_PER_MM`), bukan lewat ukuran sel, supaya
+  barcode tidak teregang. `row_heights` memakai tinggi gambar milik baris itu sendiri —
+  boleh berbeda antar baris pada mode barcode/QR.
 - Nilai yang dikirim ke Excel: `cellValue()` hanya mengubah teks polos jadi angka, kode
   ber-nol di depan (`007`) wajib tetap teks. Jangan-longgarkan regexnya.
 - `server.py` tidak boleh punya dependensi baru; penulis `.xlsx` memakai `zipfile` dan

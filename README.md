@@ -22,20 +22,27 @@ docker compose up -d --build  # bangun ulang setelah mengubah kode
 
 ## Ekspor ke Excel
 
-| Tombol | Hasil |
-|---|---|
-| **Buat Excel + barcode** (bilah atas) | Satu baris Excel per baris data. Kolom `A` berisi **gambar label** (barcode, QR, teks, simbol ikut sebagai gambar), lalu `#`, `jumlah_cetak`, dan semua kolom data. Gambar berukuran tepat seperti label di layar (mis. 50×30 mm) pada 200 dpi. Batas 300 gambar per file. |
-| **Ekspor Excel** (panel Data) | Tabel data saja ke `.xlsx`, semua sheet ikut. |
-| **Ekspor CSV** (panel Data) | Tabel data ke `.csv`. |
+| Tombol | Isi | Hasil |
+|---|---|---|
+| **Buat Excel** → *Gambar label + data* | satu baris per baris data | Kolom `A` berisi gambar label utuh (barcode, QR, teks, simbol ikut), lalu `#`, `jumlah_cetak`, dan semua kolom data. Gambar berukuran tepat seperti label di layar (mis. 50×30 mm) pada 200 dpi. |
+| **Buat Excel** → *Barcode/QR saja* | satu baris per kode | Hanya barcode/QR-nya, **tanpa teks dan simbol lain**. Kolom `A` berisi gambar kode itu sendiri (mis. 46×12 mm), lalu `Isi`, `Jenis`, `Elemen`, `Baris`, `Jumlah cetak`. Berguna kalau mau menyusun sheet barcode sendiri di Excel. |
+| **Ekspor Excel** (panel Data) | tabel data | `.xlsx`, semua sheet ikut. |
+| **Ekspor CSV** (panel Data) | tabel data | `.csv`. |
 
 Catatan:
 
+- Semua elemen barcode/QR pada desain ikut diekspor, masing-masing sebagai baris sendiri.
+  Barcode kosong atau isinya tidak valid untuk formatnya (mis. EAN13 dengan 5 digit)
+  dilewati, dan jumlahnya dilaporkan di baris status.
+- Batas 300 gambar per file. Bila data atau kode melebihi batas, aplikasi menawarkan
+  mengekspor 300 yang pertama.
 - Angka yang polos (`10.50`) ditulis sebagai angka sehingga bisa dijumlahkan di Excel. Teks
   berawalan nol (`007`, `BRG-0001`) dan yang berformat lain (`Rp 85.000`) **tetap teks**, supaya
   kode barang tidak berubah.
-- Ibaris Excel yang tidak punya gambar (baris melebihi batas 300) tetap berisi kolom datanya.
+- Ibaris Excel yang tidak punya gambar (baris melebihi batas) tetap berisi kolom datanya.
 - File `.xlsx` dibuat di server (`POST /api/xlsx`, hanya `zipfile` bawaan Python), gambar
-  ditanamkan sebagai gambar asli di dalam sheet — bukan tautan atau teks.
+  ditanamkan sebagai gambar asli di dalam sheet — bukan tautan atau teks. Ukuran tiap gambar
+  ditulis dalam EMU, jadi barcode tidak teregang walau lebar kolom berubah.
 - Yang tertanam adalah hasil render browser, jadi font mengikuti sistem. Judul teks memakai
   pemenggalan baris yang sama dengan pratinjau dan PDF (`textLayout`).
 
@@ -88,7 +95,7 @@ Riwayat dibatasi 1000 entri terakhir.
 | GET / POST | `/api/datasets` | Daftar / simpan `{name, columns, rows}` |
 | GET / DELETE | `/api/datasets/<id>` | Ambil / hapus |
 | GET / POST / DELETE | `/api/history` | Daftar / tambah / hapus semua |
-| POST | `/api/xlsx` | Susun file `.xlsx` berisi gambar. Kirim `{filename, label:{w,h}, columns, rows, images}`; `images` berisi PNG base64 per baris (`null` kalau tidak ada). Batas 300 gambar, 20.000 baris. Mengembalikan `.xlsx` sebagai unduhan. |
+| POST | `/api/xlsx` | Susun file `.xlsx` berisi gambar. Kirim `{filename, image_header, label:{w,h}, columns, rows, images}`; `images` berisi PNG base64 per baris — berupa string (pakai ukuran `label`) atau `{png, w, h}` karena tiap kode bisa berbeda ukuran. Batas 300 gambar, 20.000 baris. Mengembalikan `.xlsx` sebagai unduhan. |
 
 ## Catatan keamanan
 

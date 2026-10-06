@@ -88,6 +88,9 @@ details.hist summary{cursor:pointer;color:var(--muted);font-size:12.5px}
 .toolbar{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center;justify-content:space-between}
 .nav{display:flex;align-items:center;gap:8px}
 .nav .btn{padding:4px 11px}
+.xlsx{display:flex;align-items:center;gap:8px}
+.xlsx select{border:1px solid var(--line);background:var(--field);color:var(--ink);border-radius:6px;padding:7px 10px;font-size:13px}
+.xlsx select:hover{border-color:var(--muted)}
 .mat{flex:1;min-height:280px;border-radius:10px;background-color:var(--mat);
   background-image:linear-gradient(var(--matline) 1px,transparent 1px),linear-gradient(90deg,var(--matline) 1px,transparent 1px);
   background-position:center center;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative}
@@ -244,7 +247,13 @@ details.hist summary{cursor:pointer;color:var(--muted);font-size:12.5px}
         <button class="btn" id="next" aria-label="Baris berikutnya">&rsaquo;</button>
       </div>
       <button class="btn primary" id="export">Buat PDF</button>
-      <button class="btn" id="ximg" title="Satu baris Excel per baris data; kolom pertama berisi gambar label beserta barcode">Buat Excel + barcode</button>
+      <div class="xlsx">
+        <select id="ximgMode" aria-label="Isi file Excel" title="Pilih isi file Excel">
+          <option value="label">Gambar label + data</option>
+          <option value="code">Barcode/QR saja</option>
+        </select>
+        <button class="btn" id="ximg" title="Unduh file .xlsx sesuai pilihan di samping">Buat Excel</button>
+      </div>
     </div>
     <div class="mat" id="mat"></div>
     <div id="status" class="status" role="status" aria-live="polite"></div>
@@ -837,48 +846,59 @@ const SVG_FONT="Helvetica,Arial,'Liberation Sans',sans-serif";
 const XLSX_MAX_IMAGES=300, XLSX_DPI=200;
 const stamp=()=>new Date().toISOString().slice(0,10);
 
-/* Satu label sebagai SVG mandiri (satuan mm), barcode/QR ikut jadi vektor.
+/* Satu elemen jadi potongan SVG (satuan mm, tanpa latar).
    Memakai textLayout & symGeom yang sama dengan pratinjau dan PDF. */
+function elementSVG(el,txt){
+  const ex=0, ey=0, out=[];
+  if(el.type==='text'){
+    if(txt==='') return '';
+    const t=textLayout(md(),txt,el);
+    const anch=el.align==='center'?'middle':el.align==='right'?'end':'start';
+    const tx=anch==='middle'?ex+el.w/2 : anch==='end'?ex+el.w : ex;
+    t.lines.forEach((ln,j)=>{
+      out.push('<text x="'+tx+'" y="'+(ey+t.off+j*t.lh)+'" font-family="'+SVG_FONT+'"'
+        +' font-size="'+(t.fs*PT).toFixed(3)+'" font-weight="'+(el.bold?'bold':'normal')+'"'
+        +' text-anchor="'+anch+'" dominant-baseline="text-before-edge" xml:space="preserve">'+esc(ln)+'</text>');
+    });
+  } else if(el.type==='barcode'){
+    const bc=barcodeRuns(txt,el.fmt);
+    if(!bc) return '';
+    const th=bcTextHeight(el), bh=el.h-th-(th?0.4:0), mw=el.w/bc.total;
+    const bars=bc.runs.map(r=>'<rect x="'+(r[0]*mw).toFixed(3)+'" y="0" width="'+(r[1]*mw).toFixed(3)+'" height="'+bh.toFixed(3)+'"/>').join('');
+    out.push('<g transform="translate('+ex+' '+ey+')" fill="#000">'+bars+'</g>');
+    if(th) out.push('<text x="'+(ex+el.w/2)+'" y="'+(ey+bh+0.4)+'" font-family="'+SVG_FONT+'"'
+      +' font-size="'+(th*0.85).toFixed(3)+'" text-anchor="middle" dominant-baseline="text-before-edge">'+esc(txt)+'</text>');
+  } else if(el.type==='qr'){
+    const q=qrModules(txt);
+    if(!q) return '';
+    const size=Math.min(el.w,el.h), ms=size/(q.n+2);
+    const bx=ex+(el.w-size)/2, by=ey+(el.h-size)/2;
+    out.push('<path fill="#000" d="'+q.dark.map(p=>'M'+((p[1]+1)*ms+bx).toFixed(3)+' '+((p[0]+1)*ms+by).toFixed(3)
+      +'h'+ms.toFixed(3)+'v'+ms.toFixed(3)+'h'+(-ms).toFixed(3)+'z').join('')+'"/>');
+  } else if(el.type==='box'){
+    const lw=Math.max(el.lw||0.3,0.05);
+    if(el.h===0) out.push('<line x1="'+ex+'" y1="'+ey+'" x2="'+(ex+el.w)+'" y2="'+ey+'" stroke="#000" stroke-width="'+lw+'"/>');
+    else out.push('<rect x="'+ex+'" y="'+ey+'" width="'+el.w+'" height="'+el.h+'" fill="none" stroke="#000" stroke-width="'+lw+'"/>');
+  } else if(el.type==='symbol'){
+    out.push('<g transform="translate('+ex+' '+ey+')">'+symbolPath(el)+'</g>');
+  }
+  return out.join('');
+}
+function svgWrap(w,h,inner){
+  return '<svg xmlns="http://www.w3.org/2000/svg" width="'+w+'mm" height="'+h+'mm" viewBox="0 0 '+w+' '+h+'">'
+    +'<rect x="0" y="0" width="'+w+'" height="'+h+'" fill="#fff"/>'+inner+'</svg>';
+}
+/* Satu label utuh sebagai SVG mandiri, barcode/QR ikut jadi vektor. */
 function labelSVG(row){
-  const L=state.label, out=[];
-  if(state.page.border) out.push('<rect x="0" y="0" width="'+L.w+'" height="'+L.h+'" fill="none" stroke="#8c8c8c" stroke-width="0.1"/>');
-  state.elements.forEach(el=>{
-    const ex=el.x, ey=el.y, txt=resolve(el.content,row);
-    if(el.type==='text'){
-      if(txt==='') return;
-      const t=textLayout(md(),txt,el);
-      const anch=el.align==='center'?'middle':el.align==='right'?'end':'start';
-      const tx=anch==='middle'?ex+el.w/2 : anch==='end'?ex+el.w : ex;
-      t.lines.forEach((ln,j)=>{
-        out.push('<text x="'+tx+'" y="'+(ey+t.off+j*t.lh)+'" font-family="'+SVG_FONT+'"'
-          +' font-size="'+(t.fs*PT).toFixed(3)+'" font-weight="'+(el.bold?'bold':'normal')+'"'
-          +' text-anchor="'+anch+'" dominant-baseline="text-before-edge" xml:space="preserve">'+esc(ln)+'</text>');
-      });
-    } else if(el.type==='barcode'){
-      const bc=barcodeRuns(txt,el.fmt);
-      if(!bc) return;
-      const th=bcTextHeight(el), bh=el.h-th-(th?0.4:0), mw=el.w/bc.total;
-      const bars=bc.runs.map(r=>'<rect x="'+(r[0]*mw).toFixed(3)+'" y="0" width="'+(r[1]*mw).toFixed(3)+'" height="'+bh.toFixed(3)+'"/>').join('');
-      out.push('<g transform="translate('+ex+' '+ey+')" fill="#000">'+bars+'</g>');
-      if(th) out.push('<text x="'+(ex+el.w/2)+'" y="'+(ey+bh+0.4)+'" font-family="'+SVG_FONT+'"'
-        +' font-size="'+(th*0.85).toFixed(3)+'" text-anchor="middle" dominant-baseline="text-before-edge">'+esc(txt)+'</text>');
-    } else if(el.type==='qr'){
-      const q=qrModules(txt);
-      if(!q) return;
-      const size=Math.min(el.w,el.h), ms=size/(q.n+2);
-      const bx=ex+(el.w-size)/2, by=ey+(el.h-size)/2;
-      out.push('<path fill="#000" d="'+q.dark.map(p=>'M'+((p[1]+1)*ms+bx).toFixed(3)+' '+((p[0]+1)*ms+by).toFixed(3)
-        +'h'+ms.toFixed(3)+'v'+ms.toFixed(3)+'h'+(-ms).toFixed(3)+'z').join('')+'"/>');
-    } else if(el.type==='box'){
-      const lw=Math.max(el.lw||0.3,0.05);
-      if(el.h===0) out.push('<line x1="'+ex+'" y1="'+ey+'" x2="'+(ex+el.w)+'" y2="'+ey+'" stroke="#000" stroke-width="'+lw+'"/>');
-      else out.push('<rect x="'+ex+'" y="'+ey+'" width="'+el.w+'" height="'+el.h+'" fill="none" stroke="#000" stroke-width="'+lw+'"/>');
-    } else if(el.type==='symbol'){
-      out.push('<g transform="translate('+ex+' '+ey+')">'+symbolPath(el)+'</g>');
-    }
-  });
-  return '<svg xmlns="http://www.w3.org/2000/svg" width="'+L.w+'mm" height="'+L.h+'mm" viewBox="0 0 '+L.w+' '+L.h+'">'
-    +'<rect x="0" y="0" width="'+L.w+'" height="'+L.h+'" fill="#fff"/>'+out.join('')+'</svg>';
+  const L=state.label;
+  let inner=state.page.border
+    ? '<rect x="0" y="0" width="'+L.w+'" height="'+L.h+'" fill="none" stroke="#8c8c8c" stroke-width="0.1"/>' : '';
+  state.elements.forEach(el=>{ inner+=elementSVG(el, resolve(el.content,row)); });
+  return svgWrap(L.w,L.h,inner);
+}
+/* Hanya barcode/QR satu elemen, tanpa teks & simbol lain. */
+function codeSVG(el,txt){
+  return svgWrap(Math.max(el.w,0.1), Math.max(el.h,0.1), elementSVG(el,txt));
 }
 
 /* SVG -> PNG lewat canvas (butuh <img> + canvas, كلها bawaan browser) */
@@ -935,6 +955,49 @@ function exportData(kind){
     setStatus('Gagal mengekspor data: '+(err&&err.message?err.message:err),true);
   }
 }
+/* daftar elemen barcode/QR pada desain, diberi nama urut */
+function codeElements(){
+  const out=[], seen={};
+  state.elements.forEach(el=>{
+    if(el.type!=='barcode' && el.type!=='qr') return;
+    const base=el.type==='barcode' ? 'Barcode' : 'QR';
+    seen[base]=(seen[base]||0)+1;
+    out.push({el:el, name:base+' '+seen[base]});
+  });
+  return out;
+}
+/* Kumpulkan barcode/QR yang bisa digambar dari semua baris data. */
+function collectCodes(){
+  const codes=codeElements(), items=[];
+  let bad=0, kosong=0;
+  state.rows.forEach((row,idx)=>{
+    codes.forEach(({el,name})=>{
+      const txt=resolve(el.content,row);
+      if(txt==='' || txt==null){ kosong++; return; }
+      const okCode = el.type==='barcode' ? barcodeRuns(txt,el.fmt) : qrModules(txt);
+      if(!okCode){ bad++; return; }
+      items.push({el:el, name:name, txt:String(txt), rowIdx:idx+1, qty:qtyOf(row)});
+    });
+  });
+  return {items:items, bad:bad, kosong:kosong, jumlah:codes.length};
+}
+/* kirim daftar gambar + kolom ke server, lalu simpan hasilnya */
+async function postXlsx(payload,fname){
+  const res=await fetch('/api/xlsx',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(payload)});
+  if(!res.ok){
+    let msg='Gagal membuat file Excel.';
+    try{ const j=await res.json(); if(j&&j.error) msg=j.error; }catch(_){}
+    throw new Error(msg);
+  }
+  saveBlob(await res.blob(), fname);
+}
+function noteSkip(bad,kosong){
+  let msg='';
+  if(bad) msg+=' '+bad+' barcode/QR dilewati karena isinya tidak valid untuk formatnya.';
+  if(kosong) msg+=' '+kosong+' dilewati karena isinya kosong.';
+  return msg;
+}
 /* ekspor desain: satu baris Excel per baris data, kolom A berisi gambar label
    (barcode/QR ikut sebagai gambar), sisanya kolom data + jumlah cetak. */
 async function exportDesignXlsx(){
@@ -960,18 +1023,50 @@ async function exportDesignXlsx(){
     }
     for(let i=limit;i<state.rows.length;i++){ rows.push([String(i+1), qtyOf(state.rows[i])].concat(state.columns.map(c=>cellValue(state.rows[i][c])))); images.push(null); }
     setStatus('Menyusun file Excel…');
-    const res=await fetch('/api/xlsx',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({filename:'label-'+stamp()+'.xlsx', label:{w:state.label.w,h:state.label.h},
-                            columns:cols, rows:rows, images:images})});
-    if(!res.ok){
-      let msg='Gagal membuat file Excel.';
-      try{ const j=await res.json(); if(j&&j.error) msg=j.error; }catch(_){}
-      throw new Error(msg);
-    }
-    saveBlob(await res.blob(),'label-'+stamp()+'.xlsx');
+    await postXlsx({filename:'label-'+stamp()+'.xlsx', label:{w:state.label.w,h:state.label.h},
+                    columns:cols, rows:rows, images:images}, 'label-'+stamp()+'.xlsx');
     setStatus('Excel siap: '+limit+' gambar label (kerapatan '+XLSX_DPI+' dpi) + '+cols.length+' kolom data.');
   }catch(err){
     setStatus('Gagal mengekspor desain: '+(err&&err.message?err.message:err),true);
+  }finally{ btn.disabled=false; }
+}
+/* ekspor barcode/QR saja: tiap kode jadi gambar tersendiri, tanpa teks & simbol lain */
+async function exportCodeXlsx(){
+  if(!state.rows.length){ setStatus('Muat data terlebih dahulu.',true); return; }
+  const codes=codeElements();
+  if(!codes.length){ setStatus('Desain ini belum punya elemen Barcode atau QR.',true); return; }
+  const got=collectCodes();
+  if(!got.items.length){
+    setStatus('Tidak ada barcode/QR yang bisa digambar dari '+state.rows.length+' baris data.'+noteSkip(got.bad,got.kosong),true);
+    return;
+  }
+  let items=got.items;
+  if(items.length>XLSX_MAX_IMAGES){
+    setStatus('Terdapat '+items.length+' barcode/QR, melebihi batas '+XLSX_MAX_IMAGES+'.',true);
+    if(!confirm('Maksimal '+XLSX_MAX_IMAGES+' gambar per file Excel.\nEkspor '+XLSX_MAX_IMAGES+' kode pertama saja?')) return;
+    items=items.slice(0,XLSX_MAX_IMAGES);
+  }
+  const btn=$('#ximg'); btn.disabled=true;
+  const fname='barcode-'+stamp()+'.xlsx';
+  try{
+    const cols=['Isi','Jenis','Elemen','Baris','Jumlah cetak'];
+    const rows=[], images=[];
+    for(let i=0;i<items.length;i++){
+      const it=items[i];
+      rows.push([it.txt, it.el.type==='barcode' ? it.el.fmt : 'QR', it.name, it.rowIdx, it.qty]);
+      images.push({png: await svgPNG(codeSVG(it.el,it.txt), it.el.w, it.el.h, XLSX_DPI), w:it.el.w, h:it.el.h});
+      if((i+1)%10===0){
+        setStatus('Merender barcode/QR… '+(i+1)+' / '+items.length);
+        await new Promise(r=>setTimeout(r));
+      }
+    }
+    setStatus('Menyusun file Excel…');
+    await postXlsx({filename:fname, image_header:'Barcode',
+      label:{w:items[0].el.w, h:items[0].el.h},
+      columns:cols, rows:rows, images:images}, fname);
+    setStatus('Excel siap: '+items.length+' gambar barcode/QR dari '+got.jumlah+' elemen.'+noteSkip(got.bad,got.kosong));
+  }catch(err){
+    setStatus('Gagal mengekspor barcode/QR: '+(err&&err.message?err.message:err),true);
   }finally{ btn.disabled=false; }
 }
 
@@ -1048,7 +1143,9 @@ $('#copies').addEventListener('input',e=>{ const v=parseInt(e.target.value,10); 
 $('#prev').addEventListener('click',()=>{ if(state.rows.length){ state.rowIdx=(state.rowIdx-1+state.rows.length)%state.rows.length; renderPreview(); } });
 $('#next').addEventListener('click',()=>{ if(state.rows.length){ state.rowIdx=(state.rowIdx+1)%state.rows.length; renderPreview(); } });
 $('#export').addEventListener('click',exportPDF);
-$('#ximg').addEventListener('click',exportDesignXlsx);
+$('#ximg').addEventListener('click',()=>{
+  if($('#ximgMode').value==='code') exportCodeXlsx(); else exportDesignXlsx();
+});
 $('#xdata').addEventListener('click',()=>exportData('xlsx'));
 $('#xcsv').addEventListener('click',()=>exportData('csv'));
 $('#reset').addEventListener('click',()=>{

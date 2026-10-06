@@ -316,11 +316,16 @@ def build_xlsx(header, rows, images=(), label_mm=None, sheet_name="Label"):
     images = list(images)
     has_drawing = bool(images)
     mm_w, mm_h = label_mm if label_mm else (0, 0)
-    # lebar kolom & tinggi baris supaya kolom gambar +- pas dengan ukuran label
-    px_w = mm_w / 25.4 * 96 if mm_w else 0
-    px_h = mm_h / 25.4 * 96 if mm_h else 0
+    # lebar kolom & tinggi baris mengikuti gambar terbesar supaya kolomnya +- pas
+    # (ukuran gambar di sheet tetap presisi karena memakai EMU, bukan ukuran sel)
+    widest = max([w for _i, _p, w, _h in images], default=mm_w or 0)
+    tallest = {i: h for i, _p, _w, h in images}
+    px_w = widest / 25.4 * 96 if widest else 0
     col_widths = [round(px_w / 7.0, 2) if px_w else 12.0] + [14.0] * max(len(header) - 1, 0)
-    row_heights = {i: round(px_h * 0.75, 2) for i, _p, _w, _h in images if px_h}
+    row_heights = {}
+    for index, mm in tallest.items():
+        if mm:
+            row_heights[index] = max(row_heights.get(index, 0), round(mm / 25.4 * 96 * 0.75, 2))
 
     parts = [
         ("[Content_Types].xml",
@@ -415,9 +420,22 @@ def xlsx_report(body):
     for index, item in enumerate(images):
         if not item:
             continue
-        if not isinstance(item, str):
+        # gambar boleh berupa string base64 (pakai ukuran label) atau objek
+        # {png, w, h} karena tiap barcode/QR bisa berukuran berbeda
+        if isinstance(item, str):
+            source, w_mm, h_mm = item, mm_w, mm_h
+        elif isinstance(item, dict):
+            source = item.get("png")
+            # "w"/"h" hanya dipakai kalau memang ada; 0 tidak boleh jatuh ke ukuran label
+            w_mm = to_float(item["w"]) if "w" in item else mm_w
+            h_mm = to_float(item["h"]) if "h" in item else mm_h
+        else:
             raise ApiError(400, "Gambar harus berupa data base64 PNG.")
-        raw = item.split(",", 1)[1] if item.startswith("data:") else item
+        if not isinstance(source, str):
+            raise ApiError(400, "Gambar harus berupa data base64 PNG.")
+        if w_mm <= 0 or h_mm <= 0 or w_mm > 2000 or h_mm > 2000:
+            raise ApiError(400, "Ukuran gambar pada baris %d tidak valid." % (index + 1))
+        raw = source.split(",", 1)[1] if source.startswith("data:") else source
         try:
             png = base64.b64decode(raw, validate=True)
         except (ValueError, binascii.Error):
@@ -426,9 +444,10 @@ def xlsx_report(body):
             raise ApiError(400, "Gambar bukan PNG pada baris %d." % (index + 1))
         if len(packed) >= MAX_XLSX_IMAGES:
             raise ApiError(400, "Maksimal %d gambar per file Excel." % MAX_XLSX_IMAGES)
-        packed.append((index, png, mm_w, mm_h))
+        packed.append((index, png, w_mm, h_mm))
 
-    header = ["Label"] + list(columns)
+    title = body.get("image_header")
+    header = [(title.strip() if isinstance(title, str) and title.strip() else "Label")] + list(columns)
     body_rows = []
     for i, values in enumerate(rows):
         body_rows.append([None] + list(values))
