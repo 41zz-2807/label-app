@@ -20,14 +20,19 @@ docker compose down           # hentikan
 docker compose up -d --build  # bangun ulang setelah mengubah kode
 ```
 
-## Ekspor ke Excel
+## Membuat berkas (tombol Generate)
 
-| Tombol | Isi | Hasil |
-|---|---|---|
-| **Buat Excel** → *Gambar label + data* | satu baris per baris data | Kolom `A` berisi gambar label utuh (barcode, QR, teks, simbol ikut), lalu `#`, `jumlah_cetak`, dan semua kolom data. Gambar berukuran tepat seperti label di layar (mis. 50×30 mm) pada 200 dpi. |
-| **Buat Excel** → *Barcode/QR saja* | satu baris per kode | Hanya barcode/QR-nya, **tanpa teks dan simbol lain**. Kolom `A` berisi gambar kode itu sendiri (mis. 46×12 mm), lalu `Isi`, `Jenis`, `Elemen`, `Baris`, `Jumlah cetak`. Berguna kalau mau menyusun sheet barcode sendiri di Excel. |
-| **Ekspor Excel** (panel Data) | tabel data | `.xlsx`, semua sheet ikut. |
-| **Ekspor CSV** (panel Data) | tabel data | `.csv`. |
+Satu tombol **Generate** di bilah atas; pilih dulu hasil yang diinginkan dari dropdown di
+sebelahnya.
+
+| Pilihan | Hasil |
+|---|---|
+| **PDF label** | PDF seperti biasa, satu label per posisi di lembar stiker. |
+| **Excel: gambar label + data** | Satu baris Excel per baris data. Kolom `A` berisi gambar label utuh (barcode, QR, teks, simbol ikut), lalu `#`, `jumlah_cetak`, dan semua kolom data. Gambar berukuran tepat seperti label di layar (mis. 50×30 mm) pada 200 dpi. |
+| **Excel: barcode/QR saja** | Satu baris Excel per kode, **hanya barcode/QR-nya tanpa teks dan simbol lain**. Kolom `A` berisi gambar kode itu sendiri (mis. 46×12 mm), lalu `Isi`, `Jenis`, `Elemen`, `Baris`, `Jumlah cetak`. Berguna kalau mau menyusun sheet barcode sendiri di Excel. |
+
+Di panel **Data** ada dua tombol terpisah untuk tabel data saja: **Ekspor Excel** (`.xlsx`,
+semua sheet ikut) dan **Ekspor CSV** (`.csv`).
 
 Catatan:
 

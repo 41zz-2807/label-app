@@ -77,6 +77,9 @@ docker compose up -d --build      # bangun ulang setelah mengubah kode
   (`textLayout`), kalau tidak baris akan meleset antara layar dan hasil cetak.
 - `elementSVG()` dipakai bersama oleh `labelSVG()` (gambar label utuh) dan `codeSVG()`
   (barcode/QR saja) — jangan menggambar ulang di tempat lain.
+- Satu tombol **Generate** (`#gen`) dengan dropdown `#xmode` di bilah atas; jangan menambah
+  tombol hasil baru di toolbar — tambah opsinya di dropdown dan cabut di pencabang `#gen`.
+  Ekspor tabel data (`#xdata`, `#xcsv`) memang tetap terpisah di panel Data.
 - `POST /api/xlsx` mengembalikan biner, jadi tidak boleh lewat `send_json()` yang biasa;
   jalur JSON di `api()` tidak boleh ikut mengubahnya.
 - Ukuran gambar di `.xlsx` ditulis dalam EMU (`EMU_PER_MM`), bukan lewat ukuran sel, supaya

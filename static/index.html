@@ -89,7 +89,7 @@ details.hist summary{cursor:pointer;color:var(--muted);font-size:12.5px}
 .nav{display:flex;align-items:center;gap:8px}
 .nav .btn{padding:4px 11px}
 .xlsx{display:flex;align-items:center;gap:8px}
-.xlsx select{border:1px solid var(--line);background:var(--field);color:var(--ink);border-radius:6px;padding:7px 10px;font-size:13px}
+.xlsx select{border:1px solid var(--line);background:var(--field);color:var(--ink);border-radius:6px;padding:9px 12px}
 .xlsx select:hover{border-color:var(--muted)}
 .mat{flex:1;min-height:280px;border-radius:10px;background-color:var(--mat);
   background-image:linear-gradient(var(--matline) 1px,transparent 1px),linear-gradient(90deg,var(--matline) 1px,transparent 1px);
@@ -246,13 +246,13 @@ details.hist summary{cursor:pointer;color:var(--muted);font-size:12.5px}
         <span id="rowLabel" class="small" style="min-width:110px;text-align:center"></span>
         <button class="btn" id="next" aria-label="Baris berikutnya">&rsaquo;</button>
       </div>
-      <button class="btn primary" id="export">Buat PDF</button>
       <div class="xlsx">
-        <select id="ximgMode" aria-label="Isi file Excel" title="Pilih isi file Excel">
-          <option value="label">Gambar label + data</option>
-          <option value="code">Barcode/QR saja</option>
+        <select id="xmode" aria-label="Yang akan dibuat" title="Pilih hasil yang akan dibuat">
+          <option value="pdf">PDF label</option>
+          <option value="label">Excel: gambar label + data</option>
+          <option value="code">Excel: barcode/QR saja</option>
         </select>
-        <button class="btn" id="ximg" title="Unduh file .xlsx sesuai pilihan di samping">Buat Excel</button>
+        <button class="btn primary" id="gen" title="Buat berkas sesuai pilihan di samping">Generate</button>
       </div>
     </div>
     <div class="mat" id="mat"></div>
@@ -802,7 +802,7 @@ async function exportPDF(){
   if(!state.rows.length){ setStatus('Muat data terlebih dahulu.',true); return; }
   if(!total){ setStatus('Jumlah cetak 0. Periksa kolom jumlah atau isi salinan minimal 1.',true); return; }
   if(total>20000){ setStatus('Maksimal 20.000 label per PDF. Pecah data menjadi beberapa file.',true); return; }
-  const g=pageGeom(), btn=$('#export');
+  const g=pageGeom(), btn=$('#gen');
   btn.disabled=true;
   try{
     const {jsPDF}=window.jspdf;
@@ -1008,7 +1008,7 @@ async function exportDesignXlsx(){
     if(!confirm('Maksimal '+XLSX_MAX_IMAGES+' gambar per file Excel.\nEkspor '+XLSX_MAX_IMAGES+' baris pertama saja?')) return;
     limit=XLSX_MAX_IMAGES;
   }
-  const btn=$('#ximg'); btn.disabled=true;
+  const btn=$('#gen'); btn.disabled=true;
   const cols=['#','jumlah_cetak'].concat(state.columns);
   try{
     const rows=[], images=[];
@@ -1046,7 +1046,7 @@ async function exportCodeXlsx(){
     if(!confirm('Maksimal '+XLSX_MAX_IMAGES+' gambar per file Excel.\nEkspor '+XLSX_MAX_IMAGES+' kode pertama saja?')) return;
     items=items.slice(0,XLSX_MAX_IMAGES);
   }
-  const btn=$('#ximg'); btn.disabled=true;
+  const btn=$('#gen'); btn.disabled=true;
   const fname='barcode-'+stamp()+'.xlsx';
   try{
     const cols=['Isi','Jenis','Elemen','Baris','Jumlah cetak'];
@@ -1142,9 +1142,11 @@ $('#qtyCol').addEventListener('change',e=>{ state.qtyCol=e.target.value; renderD
 $('#copies').addEventListener('input',e=>{ const v=parseInt(e.target.value,10); if(v>0){ state.copies=Math.min(v,9999); update(); } });
 $('#prev').addEventListener('click',()=>{ if(state.rows.length){ state.rowIdx=(state.rowIdx-1+state.rows.length)%state.rows.length; renderPreview(); } });
 $('#next').addEventListener('click',()=>{ if(state.rows.length){ state.rowIdx=(state.rowIdx+1)%state.rows.length; renderPreview(); } });
-$('#export').addEventListener('click',exportPDF);
-$('#ximg').addEventListener('click',()=>{
-  if($('#ximgMode').value==='code') exportCodeXlsx(); else exportDesignXlsx();
+$('#gen').addEventListener('click',()=>{
+  const mode=$('#xmode').value;
+  if(mode==='pdf') exportPDF();
+  else if(mode==='code') exportCodeXlsx();
+  else exportDesignXlsx();
 });
 $('#xdata').addEventListener('click',()=>exportData('xlsx'));
 $('#xcsv').addEventListener('click',()=>exportData('csv'));
