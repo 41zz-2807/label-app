@@ -88,6 +88,8 @@ details.hist summary{cursor:pointer;color:var(--muted);font-size:12.5px}
 .toolbar{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center;justify-content:space-between}
 .nav{display:flex;align-items:center;gap:8px}
 .nav .btn{padding:4px 11px}
+.roomf{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
+.roomf input{width:150px;padding:6px 9px;border:1px solid var(--line);background:var(--field);border-radius:6px}
 .xlsx{display:flex;align-items:center;gap:8px}
 .xlsx select{border:1px solid var(--line);background:var(--field);color:var(--ink);border-radius:6px;padding:9px 12px}
 .xlsx select:hover{border-color:var(--muted)}
@@ -246,6 +248,9 @@ details.hist summary{cursor:pointer;color:var(--muted);font-size:12.5px}
         <span id="rowLabel" class="small" style="min-width:110px;text-align:center"></span>
         <button class="btn" id="next" aria-label="Baris berikutnya">&rsaquo;</button>
       </div>
+      <label class="roomf" title="Nama ruang kerja. Kalau browser ini dipakai lebih dari satu orang, ganti agar tiap orang punya draft sendiri.">
+        <span>Ruang</span><input type="text" id="roomName" maxlength="40" spellcheck="false" autocomplete="off">
+      </label>
       <div class="xlsx">
         <select id="xmode" aria-label="Yang akan dibuat" title="Pilih hasil yang akan dibuat">
           <option value="pdf">PDF label</option>
@@ -270,7 +275,8 @@ details.hist summary{cursor:pointer;color:var(--muted);font-size:12.5px}
 const $ = (s,r=document)=>r.querySelector(s);
 const PT = 0.352778, LH = 1.15;
 const PAGES = {A4:[210,297],A5:[148,210],A3:[297,420],Letter:[215.9,279.4],F4:[215,330]};
-const KEY = 'labelmaker:v1';
+const KEY = 'labelmaker:v1:';       // awalan draft desain; dilanjuti nama ruang kerja
+const ROOM_KEY = 'labelmaker:ruang';
 let uid = 1;
 
 if (window.qrcode && qrcode.stringToBytesFuncs && qrcode.stringToBytesFuncs['UTF-8']) {
@@ -306,9 +312,36 @@ const state = Object.assign(defaultTemplate(), {
 });
 state.elements.forEach(e=>e.id=uid++);
 
+function roomName(){
+  try{ return (localStorage.getItem(ROOM_KEY)||'').trim(); }catch(_){ return ''; }
+}
+function saveRoom(n){
+  try{ localStorage.setItem(ROOM_KEY,n); }catch(_){}
+}
+function draftKey(){ return KEY+(roomName()||'umum'); }
+function randomRoom(){
+  return 'Ruang-'+Math.random().toString(36).slice(2,7);
+}
+function cleanRoom(v){
+  return String(v==null?'':v).replace(/[\r\n\t]+/g,' ').trim().slice(0,40);
+}
+/* Ganti ruang: kembali ke templat awal, lalu muat draft milik ruang itu. */
+function switchRoom(){
+  const n=cleanRoom($('#roomName').value)||'umum';
+  $('#roomName').value=n; saveRoom(n);
+  const d=defaultTemplate();
+  state.page=Object.assign({},d.page);
+  state.label=Object.assign({},d.label);
+  state.elements=d.elements.map(e=>Object.assign({id:uid++},e));
+  state.copies=1; state.sel=0; state.qtyCol=''; state.rowIdx=0;
+  loadSaved();
+  initInputs(); renderData(); renderProps(); update();
+  setStatus('Berpindah ke ruang "'+n+'". Draft desain ruang ini dimuat.');
+}
+
 function loadSaved(){
   try{
-    const raw = localStorage.getItem(KEY); if(!raw) return;
+    const raw = localStorage.getItem(draftKey()); if(!raw) return;
     const o = JSON.parse(raw);
     if(o && o.page && o.label && Array.isArray(o.elements) && o.elements.length){
       Object.assign(state.page,o.page); Object.assign(state.label,o.label);
@@ -319,7 +352,7 @@ function loadSaved(){
 }
 function persist(){
   try{
-    localStorage.setItem(KEY, JSON.stringify({page:state.page,label:state.label,elements:state.elements,copies:state.copies}));
+    localStorage.setItem(draftKey(), JSON.stringify({page:state.page,label:state.label,elements:state.elements,copies:state.copies}));
   }catch(_){}
 }
 
@@ -1275,6 +1308,9 @@ async function initDb(){
 }
 
 /* ---------- init ---------- */
+if(!roomName()) saveRoom(randomRoom());
+$('#roomName').value=roomName();
+$('#roomName').addEventListener('change',switchRoom);
 loadSaved();
 state.source={names:['Data'],sheets:{Data:[SAMPLE.cols].concat(SAMPLE.rows)},current:'Data'};
 applySheet('Data');

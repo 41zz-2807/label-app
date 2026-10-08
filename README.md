@@ -51,6 +51,22 @@ Catatan:
 - Yang tertanam adalah hasil render browser, jadi font mengikuti sistem. Judul teks memakai
   pemenggalan baris yang sama dengan pratinjau dan PDF (`textLayout`).
 
+## Ruang kerja (dipakai bersama orang lain)
+
+Draft desain disimpan di `localStorage` browser dengan kunci per ruang kerja
+(`labelmaker:v1:<nama ruang>`). Field **Ruang** di bilah atas menentukan ruang mana yang
+dipakai. Jadi:
+
+- Satu orang tidak melihat pekerjaan orang lain, walau di browser dan komputer yang sama.
+- Beralih ruang = mengembalikan desain ke templat awal **lalu memuat draft milik ruang itu**.
+- Nama ruang tersimpan sendiri, jadi orang yang sama tetap dapatelah kembali ke ruangnya.
+- Kalau browser dipakai bergantian, **ganti nama Ruang sebelum mulai mengedit** — kalau tidak,
+  draft terakhir yang dipakai akan ikut terbawa.
+
+Yang **belum** dipisah per ruang: templat, data, dan riwayat cetak di panel "Tersimpan di
+database" — itu milik bersama di server. Kalau panel itu tidak dipakai, tidak ada yang perlu
+dikhawatirkan. (Alternatifnya: sembunyikan panelnya, atau tambahkan kolom pemilik di server.)
+
 ## Elemen di dalam label
 
 | Jenis | Isi |

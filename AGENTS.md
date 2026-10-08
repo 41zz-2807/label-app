@@ -56,6 +56,10 @@ docker compose up -d --build      # bangun ulang setelah mengubah kode
   tersebut manual dengan nama sama. SheetJS sudah ada, jadi ekspor/ekspor-impor `.xlsx`
   tidak menambah dependensi.
 - `static/index.html` berisi seluruh UI **dan** logika dalam satu IIFE, tanpa framework.
+- Draft desain disimpan di `localStorage` dengan kunci **per ruang kerja**
+  (`labelmaker:v1:<nama>`), bukan satu kunci global. `draftKey()` adalah satu-satunya jalan
+  untuk membentuk kunci itu — jangan pernah `localStorage.setItem('labelmaker:v1', ...)`
+  langsung, karena itu akan kembali membuat orang berbeda saling menimpa.
 - Kalau diuji dengan container terpisah, jangan pakai `docker compose up` pada host yang
   sedang melayani user: jalankan container uji di port lain (mis. 8099) supaya sesi yang
   sedang aktif tidak terputus. Instance yang berjalan hanya kena dampak setelah di-build
