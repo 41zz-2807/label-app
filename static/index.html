@@ -90,7 +90,7 @@ details.hist summary{cursor:pointer;color:var(--muted);font-size:12.5px}
 .nav .btn{padding:4px 11px}
 .who{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
 .who b{color:var(--ink);font-weight:600}
-.login{position:fixed;inset:0;background:rgba(12,14,18,.72);display:flex;align-items:center;justify-content:center;padding:20px;z-index:50}
+.login{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:20px;z-index:50}
 .logincard{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px;width:100%;max-width:330px;box-shadow:0 18px 50px rgba(0,0,0,.45)}
 .logincard h2{margin:0 0 4px;font-size:17px}
 .logincard p{margin:0 0 14px;color:var(--muted);font-size:13px}
@@ -129,7 +129,7 @@ details.hist summary{cursor:pointer;color:var(--muted);font-size:12.5px}
 </style>
 </head>
 <body>
-<div class="app" id="app">
+<div class="app hide" id="app">
   <aside class="side">
     <header class="brand">
       <h1>Cetak label dari data</h1>
@@ -1205,12 +1205,17 @@ else window.addEventListener('resize',renderPreview);
 
 /* ---------- login & sesi ---------- */
 function showLogin(message){
+  $('#app').classList.add('hide');   // area kerja disembunyikan, bukan hanya ditutup overlay
   $('#login').classList.remove('hide');
   $('#loginErr').textContent=message||'';
   $('#loginBtn').disabled=false;
   if(!$('#loginUser').value) $('#loginUser').focus();
 }
-function hideLogin(){ $('#login').classList.add('hide'); $('#loginErr').textContent=''; }
+function hideLogin(){
+  $('#app').classList.remove('hide');
+  $('#login').classList.add('hide');
+  $('#loginErr').textContent='';
+}
 function resetDesign(){
   const d=defaultTemplate();
   state.page=Object.assign({},d.page);
