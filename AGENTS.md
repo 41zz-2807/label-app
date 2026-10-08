@@ -83,7 +83,10 @@ docker compose up -d --build      # bangun ulang setelah mengubah kode
   PDF, dan hasil ekspor tidak berbeda.
 - Subpath **tertutup** (lingkaran, persegi) wajib memakai helper `O()`. Polyline terbuka
   membuat sisi terakhir hilang di preview maupun PDF.
-- Font PDF adalah Helvetica → karakter non-Latin (CJK, emoji) belum didukung.
+- Huruf: hanya font standar PDF 14 (Helvetica/Times/Courier) lewat peta `FONTS`; `fontPDF()` untuk
+  jsPDF dan `fontCSS()` untuk pratinjau/SVG. Jangan tambah huruf baru tanpa menambahkan keduanya
+  di peta itu, kalau tidak pratinjau dan PDF akan berbeda. Karakter non-Latin (CJK, emoji) belum
+  didukung di ketiga huruf itu.
 - Batas yang perlu dijaga: 20.000 label per PDF, 200.000 baris dataset, 300 gambar per
   file Excel, 20.000 baris per file Excel, body request 64 MB.
 - Pratinjau, PDF, **dan ekspor Excel** harus selalu memakai perhitungan teks yang sama

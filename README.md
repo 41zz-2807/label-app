@@ -55,14 +55,20 @@ Catatan:
 
 | Jenis | Isi |
 |---|---|
-| Teks | Satu blok teks, bisa `{NamaKolom}`, rata kiri/tengah/kanan, font mengecil sendiri agar muat |
+| Teks | Satu blok teks, bisa `{NamaKolom}`, rata kiri/tengah/kanan, pilihan huruf (Helvetica/Times/Courier), font mengecil sendiri agar muat |
 | Barcode | CODE128, CODE39, EAN13, EAN8, UPC, ITF, opsional teks di bawahnya |
 | QR | Kode QR (tingkat M), selalu proporsional |
 | Kotak/garis | Persegi atau garis lurus (tinggi 0), untuk pembatas |
 | Simbol | Panah (→ ← ↑ ↓ ⇄), chevron, garis, segitiga, ketupat, plus, bintang, hati, petir, centang, silang, lingkaran, persegi — dengan pilihan gaya garis / isi / garis+isi dan tebal garis |
 
 Semua elemen bisa digeser dan diperbesar lewat gagang kuning di pojok elemen, atau diisi
- angkanya di panel properti. Simbol dan garis digambar sebagai **vektor** (bukan gambar),
+ angkanya di panel properti.
+
+**Jenis huruf** (elemen teks): Helvetica (sans-serif), Times (serif), atau Courier
+(monospace). Ketiganya adalah font standar PDF, jadi tidak ada file font yang ikut dikirim dan
+ukuran PDF tetap kecil. Tumpukan huruf di layar dipilih yang metriknya sama dengan font PDF
+(Arial untuk Helvetica, Times New Roman untuk Times, dan seterusnya) supaya pemenggalan baris
+tidak meleset antara pratinjau dan hasil cetak. Simbol dan garis digambar sebagai **vektor** (bukan gambar),
 jadi tetap tajam di PDF berapa pun ukurannya dan tidak bergantung pada font.
 
 ## Login dan pengguna

@@ -32,7 +32,7 @@ html{scroll-padding-top:env(safe-area-inset-top,0px)}
 body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif}
 button,input,select,textarea{font:inherit;color:inherit}
 .app{display:grid;grid-template-columns:minmax(320px,410px) 1fr;min-height:100vh}
-.side{padding:20px 20px 40px;border-right:1px solid var(--line);background:var(--panel);overflow-y:auto}
+.side{padding:20px 20px 20px;border-right:1px solid var(--line);background:var(--panel);overflow-y:auto;display:flex;flex-direction:column}
 .brand h1{font-size:20px;line-height:1.2;margin:0 0 6px;font-weight:600}
 .brand p{margin:0;color:var(--muted)}
 section{margin-top:22px;padding-top:18px;border-top:1px solid var(--line)}
@@ -88,8 +88,9 @@ details.hist summary{cursor:pointer;color:var(--muted);font-size:12.5px}
 .toolbar{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center;justify-content:space-between}
 .nav{display:flex;align-items:center;gap:8px}
 .nav .btn{padding:4px 11px}
-.who{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
-.who b{color:var(--ink);font-weight:600}
+.sidefoot{margin-top:auto;padding-top:14px;border-top:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:10px}
+.who{display:flex;flex-direction:column;gap:1px;font-size:12.5px;color:var(--muted);min-width:0}
+.who b{color:var(--ink);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .login{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:20px;z-index:50}
 .logincard{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px;width:100%;max-width:330px;box-shadow:0 18px 50px rgba(0,0,0,.45)}
 .logincard h2{margin:0 0 4px;font-size:17px}
@@ -245,6 +246,11 @@ details.hist summary{cursor:pointer;color:var(--muted);font-size:12.5px}
       <p class="muted small" style="margin-top:12px">Geser elemen langsung di pratinjau; tarik kotak kuning di pojok untuk mengubah ukuran. Tombol panah menggeser 0,5 mm. Gunakan <code>{NamaKolom}</code> untuk mengambil isi dari data. Simbol (panah, bintang, cek, dan lainnya) juga bisa diperbesar lewat gagang yang sama dan ikut masuk ke PDF sebagai gambar vektor. Font PDF memakai Helvetica, jadi karakter non-Latin belum didukung.</p>
       <button class="btn sm" id="reset" style="margin-top:6px">Kembalikan templat awal</button>
     </section>
+
+    <footer class="sidefoot">
+      <span class="who"><span>Masuk sebagai</span><b id="whoName">-</b></span>
+      <button class="btn sm" id="logout" title="Keluar dari akun ini">Keluar</button>
+    </footer>
   </aside>
 
   <main class="stage">
@@ -253,10 +259,6 @@ details.hist summary{cursor:pointer;color:var(--muted);font-size:12.5px}
         <button class="btn" id="prev" aria-label="Baris sebelumnya">&lsaquo;</button>
         <span id="rowLabel" class="small" style="min-width:110px;text-align:center"></span>
         <button class="btn" id="next" aria-label="Baris berikutnya">&rsaquo;</button>
-      </div>
-      <div class="who">
-        <span id="whoName" title="Pengguna yang sedang masuk"></span>
-        <button class="btn" id="logout" title="Keluar dari akun ini">Keluar</button>
       </div>
       <div class="xlsx">
         <select id="xmode" aria-label="Yang akan dibuat" title="Pilih hasil yang akan dibuat">
@@ -341,6 +343,19 @@ state.elements.forEach(e=>e.id=uid++);
    walau memakai browser dan komputer yang sama. */
 function draftKey(){ return KEY+(state.user ? state.user.username : 'belum-masuk'); }
 
+/* ---------- huruf ---------- */
+/* Hanya font standar PDF 14, jadi tidak perlu_PO file font dan ukuran PDF tetap kecil.
+   Tumpukan CSS-nya dipilih yang metriknya sama dengan font PDF, supaya pemenggalan baris
+   (textLayout) dan hasil cetak tidak meleset. */
+const FONTS = {
+  helvetica:{label:'Helvetica (sans-serif)', pdf:'helvetica', css:"Helvetica, Arial, 'Liberation Sans', sans-serif"},
+  times:    {label:'Times (serif)',          pdf:'times',     css:"Times, 'Times New Roman', 'Liberation Serif', serif"},
+  courier:  {label:'Courier (monospace)',    pdf:'courier',   css:"'Courier New', Courier, 'Liberation Mono', monospace"}
+};
+function fontOf(el){ return FONTS[(el && el.font) || 'helvetica'] || FONTS.helvetica; }
+function fontCSS(el){ return fontOf(el).css; }
+function fontPDF(el){ return fontOf(el).pdf; }
+
 function loadSaved(){
   try{
     const raw = localStorage.getItem(draftKey()); if(!raw) return;
@@ -397,7 +412,7 @@ function totalLabels(){ return state.rows.reduce((a,r)=>a+qtyOf(r),0); }
 
 /* ---------- text layout (shared by preview and PDF) ---------- */
 function textLayout(doc,str,el){
-  doc.setFont('helvetica', el.bold?'bold':'normal');
+  doc.setFont(fontPDF(el), el.bold?'bold':'normal');
   const build = f => {
     doc.setFontSize(f);
     const lines=[];
@@ -629,9 +644,11 @@ function renderProps(){
   h+='<div class="grid2">'+num('x','Posisi X (mm)')+num('y','Posisi Y (mm)')+num('w','Lebar (mm)',0.5,1)+num('h','Tinggi (mm)',0.5,0)+'</div>';
   if(el.type==='text'){
     h+='<div class="grid2">'+num('fs','Ukuran font (pt)',0.5,3)
-      +f('Rata','<select data-k="align"><option value="left"'+(el.align==='left'?' selected':'')+'>Kiri</option><option value="center"'+(el.align==='center'?' selected':'')+'>Tengah</option><option value="right"'+(el.align==='right'?' selected':'')+'>Kanan</option></select>')+'</div>';
-    h+=f('Posisi vertikal','<select data-k="valign"><option value="top"'+(el.valign==='top'?' selected':'')+'>Atas</option><option value="middle"'+(el.valign==='middle'?' selected':'')+'>Tengah</option><option value="bottom"'+(el.valign==='bottom'?' selected':'')+'>Bawah</option></select>');
+      +f('Jenis huruf','<select data-k="font">'+Object.keys(FONTS).map(k=>'<option value="'+k+'"'+(fontOf(el).pdf===FONTS[k].pdf?' selected':'')+'>'+FONTS[k].label+'</option>').join('')+'</select>')+'</div>';
+    h+='<div class="grid2">'+f('Rata','<select data-k="align"><option value="left"'+(el.align==='left'?' selected':'')+'>Kiri</option><option value="center"'+(el.align==='center'?' selected':'')+'>Tengah</option><option value="right"'+(el.align==='right'?' selected':'')+'>Kanan</option></select>')
+      +f('Posisi vertikal','<select data-k="valign"><option value="top"'+(el.valign==='top'?' selected':'')+'>Atas</option><option value="middle"'+(el.valign==='middle'?' selected':'')+'>Tengah</option><option value="bottom"'+(el.valign==='bottom'?' selected':'')+'>Bawah</option></select>')+'</div>';
     h+=chk('bold','Tebal')+chk('fit','Kecilkan font otomatis agar muat di kotak');
+    h+='<div class="muted small">Ketiga huruf ini adalah font standar PDF, jadi hasil cetak tidak butuh file font tambahan. Pemenggalan baris tetap sama antara layar dan PDF.</div>';
   }
   if(el.type==='barcode'){
     h+=f('Jenis barcode','<select data-k="fmt">'+['CODE128','CODE39','EAN13','EAN8','UPC','ITF'].map(x=>'<option'+(el.fmt===x?' selected':'')+'>'+x+'</option>').join('')+'</select>');
@@ -676,7 +693,7 @@ function renderPreview(){
         const l=document.createElement('div'); l.className='ln'; l.textContent=ln;
         l.style.top=((t.off+j*t.lh)*s)+'px';
         l.style.fontSize=(t.fs*PT*s)+'px'; l.style.lineHeight=(t.lh*s)+'px';
-        l.style.fontWeight=el.bold?'700':'400'; l.style.textAlign=el.align;
+        l.style.fontFamily=fontCSS(el); l.style.fontWeight=el.bold?'700':'400'; l.style.textAlign=el.align;
         d.appendChild(l);
       });
     } else if(el.type==='barcode'){
@@ -688,7 +705,8 @@ function renderPreview(){
         d.insertAdjacentHTML('beforeend','<svg style="left:0;top:0" width="'+el.w*s+'" height="'+bh*s+'" viewBox="0 0 '+bc.total+' 1" preserveAspectRatio="none" shape-rendering="crispEdges" fill="#000">'+rects+'</svg>');
         if(th){
           const l=document.createElement('div'); l.className='ln'; l.textContent=txt;
-          l.style.top=((bh+0.4)*s)+'px'; l.style.fontSize=(th*0.85*s)+'px'; l.style.lineHeight=(th*s)+'px'; l.style.textAlign='center';
+          l.style.top=((bh+0.4)*s)+'px'; l.style.fontSize=(th*0.85*s)+'px'; l.style.lineHeight=(th*s)+'px';
+          l.style.fontFamily=fontCSS(el); l.style.textAlign='center';
           d.appendChild(l);
         }
       }
@@ -807,7 +825,7 @@ function drawLabel(doc,row,ox,oy,ctx){
     if(el.type==='text'){
       if(txt==='') return;
       const t=textLayout(doc,txt,el);
-      doc.setFont('helvetica',el.bold?'bold':'normal'); doc.setFontSize(t.fs);
+      doc.setFont(fontPDF(el),el.bold?'bold':'normal'); doc.setFontSize(t.fs);
       const tx= el.align==='center'?ex+el.w/2 : el.align==='right'?ex+el.w : ex;
       t.lines.forEach((ln,j)=>{ doc.text(ln,tx,ey+t.off+j*t.lh,{baseline:'top',align:el.align||'left'}); });
     } else if(el.type==='barcode'){
@@ -816,7 +834,7 @@ function drawLabel(doc,row,ox,oy,ctx){
       const th=bcTextHeight(el), bh=el.h-th-(th?0.4:0), mw=el.w/bc.total;
       bc.runs.forEach(r=>{ doc.rect(ex+r[0]*mw,ey,r[1]*mw,bh,'F'); });
       if(th){
-        doc.setFont('helvetica','normal'); doc.setFontSize(th*0.85/PT);
+        doc.setFont(fontPDF(el),'normal'); doc.setFontSize(th*0.85/PT);
         doc.text(String(txt),ex+el.w/2,ey+bh+0.4,{baseline:'top',align:'center'});
       }
     } else if(el.type==='qr'){
@@ -878,7 +896,6 @@ async function exportPDF(){
 }
 
 /* ---------- ekspor ke Excel ---------- */
-const SVG_FONT="Helvetica,Arial,'Liberation Sans',sans-serif";
 const XLSX_MAX_IMAGES=300, XLSX_DPI=200;
 const stamp=()=>new Date().toISOString().slice(0,10);
 
@@ -892,7 +909,7 @@ function elementSVG(el,txt){
     const anch=el.align==='center'?'middle':el.align==='right'?'end':'start';
     const tx=anch==='middle'?ex+el.w/2 : anch==='end'?ex+el.w : ex;
     t.lines.forEach((ln,j)=>{
-      out.push('<text x="'+tx+'" y="'+(ey+t.off+j*t.lh)+'" font-family="'+SVG_FONT+'"'
+      out.push('<text x="'+tx+'" y="'+(ey+t.off+j*t.lh)+'" font-family="'+fontCSS(el)+'"'
         +' font-size="'+(t.fs*PT).toFixed(3)+'" font-weight="'+(el.bold?'bold':'normal')+'"'
         +' text-anchor="'+anch+'" dominant-baseline="text-before-edge" xml:space="preserve">'+esc(ln)+'</text>');
     });
@@ -902,7 +919,7 @@ function elementSVG(el,txt){
     const th=bcTextHeight(el), bh=el.h-th-(th?0.4:0), mw=el.w/bc.total;
     const bars=bc.runs.map(r=>'<rect x="'+(r[0]*mw).toFixed(3)+'" y="0" width="'+(r[1]*mw).toFixed(3)+'" height="'+bh.toFixed(3)+'"/>').join('');
     out.push('<g transform="translate('+ex+' '+ey+')" fill="#000">'+bars+'</g>');
-    if(th) out.push('<text x="'+(ex+el.w/2)+'" y="'+(ey+bh+0.4)+'" font-family="'+SVG_FONT+'"'
+    if(th) out.push('<text x="'+(ex+el.w/2)+'" y="'+(ey+bh+0.4)+'" font-family="'+fontCSS(el)+'"'
       +' font-size="'+(th*0.85).toFixed(3)+'" text-anchor="middle" dominant-baseline="text-before-edge">'+esc(txt)+'</text>');
   } else if(el.type==='qr'){
     const q=qrModules(txt);
@@ -1226,8 +1243,7 @@ function resetDesign(){
 async function afterLogin(user){
   state.user=user;
   resetDesign(); loadSaved();
-  $('#whoName').innerHTML='Masuk sebagai <b></b>';
-  $('#whoName').querySelector('b').textContent=user.username;
+  $('#whoName').textContent=user.username;
   hideLogin();
   initInputs(); renderData(); renderProps(); update();
   await initDb();
@@ -1250,7 +1266,7 @@ async function doLogout(){
   try{ await api('/logout',{method:'POST'}); }catch(_){}
   state.user=null;
   $('#dbSec').classList.add('hide');
-  $('#whoName').textContent='';
+  $('#whoName').textContent='-';
   resetDesign(); update();
   showLogin('Anda sudah keluar. Masuk lagi untuk melanjutkan.');
 }
