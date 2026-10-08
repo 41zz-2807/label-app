@@ -878,20 +878,23 @@ def main():
                 password = getpass.getpass("Kata sandi untuk %s: " % args.add_user)
                 again = getpass.getpass("Ulangi: ")
                 if password != again:
-                    sys.exit("Kata sandi tidak sama.")
-                uid = create_user(conn, args.add_user, password,
-                                  is_admin=not conn.execute("SELECT 1 FROM users").fetchone())
+                    sys.exit("Gagal: kata sandi tidak sama.")
+                try:
+                    uid = create_user(conn, args.add_user, password,
+                                      is_admin=not conn.execute("SELECT 1 FROM users").fetchone())
+                except ValueError as exc:
+                    sys.exit("Gagal: %s" % exc)
                 print("Pengguna '%s' dibuat (id=%d)." % (clean_username(args.add_user), uid))
                 return
             if args.set_password:
                 row = conn.execute("SELECT id FROM users WHERE username=?",
                                    (clean_username(args.set_password),)).fetchone()
                 if row is None:
-                    sys.exit("Pengguna '%s' tidak ada." % args.set_password)
+                    sys.exit("Gagal: pengguna '%s' tidak ada." % args.set_password)
                 password = getpass.getpass("Kata sandi baru: ")
                 again = getpass.getpass("Ulangi: ")
                 if password != again:
-                    sys.exit("Kata sandi tidak sama.")
+                    sys.exit("Gagal: kata sandi tidak sama.")
                 salt = secrets.token_hex(16)
                 conn.execute("UPDATE users SET pwd_hash=?, salt=? WHERE id=?",
                              (hash_password(password, salt), salt, row["id"]))
@@ -902,7 +905,7 @@ def main():
                 row = conn.execute("SELECT id FROM users WHERE username=?",
                                    (clean_username(args.del_user),)).fetchone()
                 if row is None:
-                    sys.exit("Pengguna '%s' tidak ada." % args.del_user)
+                    sys.exit("Gagal: pengguna '%s' tidak ada." % args.del_user)
                 conn.execute("DELETE FROM sessions WHERE user_id=?", (row["id"],))
                 conn.execute("DELETE FROM users WHERE id=?", (row["id"],))
                 print("Pengguna '%s' dihapus. Templat dan datanya tidak ikut terhapus."

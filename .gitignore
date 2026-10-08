@@ -9,3 +9,6 @@ static/vendor/
 # cache Python
 __pycache__/
 *.pyc
+
+# backup database lokal
+backup/
