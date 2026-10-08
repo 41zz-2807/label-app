@@ -100,6 +100,11 @@ details.hist summary{cursor:pointer;color:var(--muted);font-size:12.5px}
 .xlsx{display:flex;align-items:center;gap:8px}
 .xlsx select{border:1px solid var(--line);background:var(--field);color:var(--ink);border-radius:6px;padding:9px 12px}
 .xlsx select:hover{border-color:var(--muted)}
+.fileops{display:flex;align-items:center;gap:8px}
+.fn{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
+.fn input{width:170px;padding:7px 9px;border:1px solid var(--line);background:var(--field);border-radius:6px}
+#saveTpl.dirty{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+#saveTpl.dirty::after{content:"\2022"}
 .mat{flex:1;min-height:280px;border-radius:10px;background-color:var(--mat);
   background-image:linear-gradient(var(--matline) 1px,transparent 1px),linear-gradient(90deg,var(--matline) 1px,transparent 1px);
   background-position:center center;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative}
@@ -140,8 +145,8 @@ details.hist summary{cursor:pointer;color:var(--muted);font-size:12.5px}
     <section>
       <h2>Data</h2>
       <label class="filebtn">
-        <input type="file" id="file" accept=".csv,.tsv,.txt,.xlsx,.xls,.xlsm,.ods">
-        <span><b>Pilih file</b> CSV atau Excel<br><span class="muted small">Baris pertama dibaca sebagai nama kolom</span></span>
+        <input type="file" id="file" accept=".csv,.tsv,.txt,.xlsx,.xls,.xlsm,.ods,.json">
+        <span><b>Pilih file</b> CSV, Excel, atau desain .json<br><span class="muted small">Baris pertama dibaca sebagai nama kolom; berkas .json dimuat sebagai desain label</span></span>
       </label>
       <div class="stack" style="margin-top:10px">
         <div id="dataInfo" class="small"></div>
@@ -268,6 +273,14 @@ details.hist summary{cursor:pointer;color:var(--muted);font-size:12.5px}
         </select>
         <button class="btn primary" id="gen" title="Buat berkas sesuai pilihan di samping">Generate</button>
       </div>
+      <div class="fileops">
+        <label class="fn" title="Nama berkas desain. Save akan mengunduh desain ke komputer ini.">
+          <span>Berkas</span><input type="text" id="fileName" maxlength="80" spellcheck="false"
+            autocomplete="off" placeholder="label-desain.json">
+        </label>
+        <button class="btn" id="openTpl" title="Buka desain dari berkas .json (Ctrl+O)">Buka</button>
+        <button class="btn" id="saveTpl" title="Simpan desain ke komputer ini (Ctrl+S)">Save</button>
+      </div>
     </div>
     <div class="mat" id="mat"></div>
     <div id="status" class="status" role="status" aria-live="polite"></div>
@@ -335,7 +348,8 @@ const SAMPLE = {
 };
 const state = Object.assign(defaultTemplate(), {
   columns:[], rows:[], isSample:true, source:{names:[],sheets:{},current:''},
-  qtyCol:'', copies:1, sel:0, rowIdx:0, user:null
+  qtyCol:'', copies:1, sel:0, rowIdx:0, user:null,
+  savedSig:null, savedName:''   // desain terakhir yang disimpan ke berkas
 });
 state.elements.forEach(e=>e.id=uid++);
 
@@ -356,6 +370,119 @@ function fontOf(el){ return FONTS[(el && el.font) || 'helvetica'] || FONTS.helve
 function fontCSS(el){ return fontOf(el).css; }
 function fontPDF(el){ return fontOf(el).pdf; }
 
+/* ---------- berkas desain (Save / Buka) ---------- */
+const DESIGN_APP = 'label-app', DESIGN_VERSION = 1, MAX_ELEMENTS = 500;
+const BAD_CHARS = /[\\/:*?"<>|]+/g;
+
+function cleanFileName(v){
+  const raw=String(v==null?'':v).replace(/\s+/g,' ').trim().replace(BAD_CHARS,'-').replace(/^\.+/,'');
+  const hasJson=/\.json$/i.test(raw);
+  const base=(hasJson ? raw.slice(0,-5) : raw).trim().slice(0,75);   // total dengan ekstensi <= 80
+  return (base || 'label-'+stamp())+'.json';
+}
+/* Yang disimpan hanya desain; data/baris diimpor sendiri dari CSV atau Excel. */
+function designObj(){
+  return {
+    app:DESIGN_APP, version:DESIGN_VERSION, savedAt:new Date().toISOString(),
+    template:{
+      page:state.page, label:state.label, copies:state.copies,
+      elements:state.elements.map(e=>{ const c=Object.assign({},e); delete c.id; return c; })
+    }
+  };
+}
+function designSig(){
+  return JSON.stringify({page:state.page,label:state.label,copies:state.copies,elements:state.elements});
+}
+function renderDirty(){
+  const dirty = designSig()!==state.savedSig;
+  $('#saveTpl').classList.toggle('dirty',dirty);
+  $('#saveTpl').title = dirty ? 'Ada perubahan yang belum disimpan (Ctrl+S)' : 'Desain tersimpan (Ctrl+S)';
+  document.title = (dirty?'\u2022 ':'')+(state.savedName || 'Cetak label');
+}
+function doSave(){
+  const name=cleanFileName($('#fileName').value);
+  const json=JSON.stringify(designObj(),null,1);
+  saveBlob(new Blob([json],{type:'application/json'}), name);
+  $('#fileName').value=name;
+  state.savedSig=designSig(); state.savedName=name;
+  renderDirty();
+  setStatus('Desain disimpan sebagai '+name+' di folder unduhan browser.');
+}
+function openDesignPicker(){ $('#file').click(); }
+
+/* --- validasi: berkas datang dari luar, jadi tidak boleh dipercaya mentah --- */
+function clampNum(v,fallback,min,max){
+  const n=parseFloat(v);
+  if(!isFinite(n)) return fallback;
+  return Math.max(min,Math.min(max,n));
+}
+function clampInt(v,fallback,min,max){ return Math.round(clampNum(v,fallback,min,max)); }
+function pick(v,allowed,fallback){ return allowed.indexOf(v)>=0 ? v : fallback; }
+function cleanDesignElement(e){
+  if(!e || typeof e!=='object') throw new Error('Elemen bukan objek.');
+  const t=e.type;
+  if(!TYPE_NAME[t]) throw new Error('Jenis elemen tidak dikenal: '+String(t).slice(0,20));
+  const out={type:t};
+  out.x=clampNum(e.x,0,-2000,2000); out.y=clampNum(e.y,0,-2000,2000);
+  out.w=clampNum(e.w,10,0.5,2000); out.h=clampNum(e.h,5,t==='box'?0:0.5,2000);
+  const text=v=>String(v==null?'':v).slice(0,2000);
+  if(t==='text'){
+    out.content=text(e.content); out.fs=clampNum(e.fs,10,3,200);
+    out.bold=!!e.bold; out.fit=!!e.fit;
+    out.align=pick(e.align,['left','center','right'],'left');
+    out.valign=pick(e.valign,['top','middle','bottom'],'top');
+    if(FONTS[e.font]) out.font=e.font;
+  } else if(t==='barcode'){
+    out.content=text(e.content); out.showText=!!e.showText;
+    out.fmt=pick(e.fmt,['CODE128','CODE39','EAN13','EAN8','UPC','ITF'],'CODE128');
+  } else if(t==='qr'){
+    out.content=text(e.content);
+  } else if(t==='box'){
+    out.lw=clampNum(e.lw,0.3,0.05,20);
+  } else {
+    if(!SYMBOLS[e.sym]) throw new Error('Simbol tidak dikenal: '+String(e.sym).slice(0,20));
+    out.sym=e.sym; out.lw=clampNum(e.lw,0.8,0.05,20); out.style=pick(e.style,['S','F','FD'],'FD');
+  }
+  return out;
+}
+function cleanDesignPage(p){
+  const g=defaultTemplate().page, o=(p && typeof p==='object') ? p : {};
+  return {
+    mode:pick(o.mode,['sheet','single'],'sheet'),
+    size:typeof o.size==='string' ? o.size.slice(0,20) : g.size,
+    orient:pick(o.orient,['landscape','portrait'],'landscape'),
+    w:clampNum(o.w,g.w,20,2000), h:clampNum(o.h,g.h,20,2000),
+    ml:clampNum(o.ml,g.ml,0,200), mt:clampNum(o.mt,g.mt,0,200),
+    gx:clampNum(o.gx,g.gx,0,200), gy:clampNum(o.gy,g.gy,0,200),
+    cols:clampInt(o.cols,g.cols,0,100), rows:clampInt(o.rows,g.rows,0,100),
+    offset:clampInt(o.offset,g.offset,0,10000),
+    border:o.border!==false, fillRow:!!o.fillRow
+  };
+}
+function applyDesign(obj){
+  if(!obj || typeof obj!=='object') throw new Error('Berkas bukan JSON objek.');
+  if(obj.app!==DESIGN_APP) throw new Error('Berkas ini bukan desain label aplikasi ini.');
+  const ver=+obj.version;
+  if(!(ver>=1)) throw new Error('Berkas desain tidak punya versi yang dikenali.');
+  if(ver>DESIGN_VERSION) throw new Error('Berkas dibuat aplikasi yang lebih baru (versi '+ver+').');
+  const t=obj.template;
+  if(!t || typeof t!=='object') throw new Error('Bagian "template" tidak ada.');
+  if(!Array.isArray(t.elements) || !t.elements.length) throw new Error('Desain tidak berisi elemen.');
+  if(t.elements.length>MAX_ELEMENTS) throw new Error('Terlalu banyak elemen: '+t.elements.length+' (maksimal '+MAX_ELEMENTS+').');
+  state.page=cleanDesignPage(t.page);
+  state.label={w:clampNum(t.label&&t.label.w,50,5,2000), h:clampNum(t.label&&t.label.h,30,5,2000)};
+  state.copies=clampInt(t.copies,1,1,9999);
+  state.elements=t.elements.map(cleanDesignElement).map(e=>Object.assign({id:uid++},e));
+  state.sel=0;
+}
+function afterDesignLoad(name){
+  state.savedSig=designSig(); state.savedName=name;
+  if(name) $('#fileName').value=name;
+  initInputs(); renderData(); renderProps(); update();
+  renderDirty();
+  setStatus('Desain dimuat dari '+name+'.');
+}
+
 function loadSaved(){
   try{
     const raw = localStorage.getItem(draftKey()); if(!raw) return;
@@ -372,6 +499,7 @@ function persist(){
   try{
     localStorage.setItem(draftKey(), JSON.stringify({page:state.page,label:state.label,elements:state.elements,copies:state.copies}));
   }catch(_){}
+  renderDirty();            // dipanggil setiap perubahan desain (edit, geser, tambah elemen)
 }
 
 /* ---------- helpers ---------- */
@@ -578,6 +706,15 @@ async function loadFile(file){
   setStatus('Membaca '+file.name+'…');
   try{
     const ext = file.name.split('.').pop().toLowerCase();
+    // berkas desain .json: bukan data, tapi rancangannya
+    if(ext==='json'){
+      let obj;
+      try{ obj = JSON.parse(await file.text()); }
+      catch(_){ throw new Error('Berkas .json tidak bisa dibaca (JSON rusak).'); }
+      applyDesign(obj);
+      afterDesignLoad(file.name);
+      return;
+    }
     let sheets={}, names=[];
     if(['csv','tsv','txt'].includes(ext)){
       sheets['Data']=parseCSV(await file.text()); names=['Data'];
@@ -1195,6 +1332,8 @@ $('#qtyCol').addEventListener('change',e=>{ state.qtyCol=e.target.value; renderD
 $('#copies').addEventListener('input',e=>{ const v=parseInt(e.target.value,10); if(v>0){ state.copies=Math.min(v,9999); update(); } });
 $('#prev').addEventListener('click',()=>{ if(state.rows.length){ state.rowIdx=(state.rowIdx-1+state.rows.length)%state.rows.length; renderPreview(); } });
 $('#next').addEventListener('click',()=>{ if(state.rows.length){ state.rowIdx=(state.rowIdx+1)%state.rows.length; renderPreview(); } });
+$('#saveTpl').addEventListener('click',doSave);
+$('#openTpl').addEventListener('click',openDesignPicker);
 $('#gen').addEventListener('click',()=>{
   const mode=$('#xmode').value;
   if(mode==='pdf') exportPDF();
@@ -1209,6 +1348,12 @@ $('#reset').addEventListener('click',()=>{
   initInputs(); renderProps(); update();
 });
 document.addEventListener('keydown',e=>{
+  // pintasan berkas jalan dari mana saja, termasuk saat fokus di kolom nama berkas
+  if((e.ctrlKey||e.metaKey) && !e.altKey){
+    const k=(e.key||'').toLowerCase();
+    if(k==='s'){ e.preventDefault(); doSave(); return; }
+    if(k==='o'){ e.preventDefault(); openDesignPicker(); return; }
+  }
   const tg=e.target; if(tg && /^(INPUT|TEXTAREA|SELECT)$/.test(tg.tagName)) return;
   const el=state.elements[state.sel]; if(!el) return;
   const st=e.shiftKey?2:0.5; let used=true;
@@ -1245,9 +1390,14 @@ async function afterLogin(user){
   resetDesign(); loadSaved();
   $('#whoName').textContent=user.username;
   hideLogin();
-  initInputs(); renderData(); renderProps(); update();
+  initInputs(); renderData(); renderProps();
+  // desain yang dimuat dianggap "termuat", bukan "belum tersimpan";
+  // berkas sendiri baru dianggap aman setelah ditekan Save
+  state.savedSig=designSig();
+  if(!$('#fileName').value) $('#fileName').value=state.savedName || ('label-'+user.username+'.json');
+  update(); renderDirty();
   await initDb();
-  setStatus('Selamat datang, '+user.username+'.');
+  setStatus('Selamat datang, '+user.username+'. Tekan Save untuk menyimpan desain ke komputer ini.');
 }
 async function doLogin(e){
   if(e) e.preventDefault();
@@ -1267,6 +1417,8 @@ async function doLogout(){
   state.user=null;
   $('#dbSec').classList.add('hide');
   $('#whoName').textContent='-';
+  $('#saveTpl').classList.remove('dirty');
+  state.savedSig=null; state.savedName=''; $('#fileName').value='';
   resetDesign(); update();
   showLogin('Anda sudah keluar. Masuk lagi untuk melanjutkan.');
 }

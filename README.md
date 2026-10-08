@@ -20,6 +20,26 @@ docker compose down           # hentikan
 docker compose up -d --build  # bangun ulang setelah mengubah kode
 ```
 
+## Menyimpan dan membuka desain
+
+Toolbar punya kelompok **Berkas**: kolom nama berkas, tombol **Buka**, dan tombol **Save**
+(`Ctrl+S` / `Ctrl+O`, jalan dari mana saja termasuk saat fokus di kolom nama).
+
+- **Save** mengunduh desain ke komputer sebagai `.json` (nama berkas otomatis dibersihkan:
+  karakter `/ \ : * ? " < > |` diganti `-`, panjang dibatasi 80 karakter, ekstensi `.json`
+  ditambahkan otomatis).
+- **Buka** memakai pemilih berkas yang sama dengan memuat data. Berkas `.json` yang dipilih
+  dibaca sebagai desain; CSV/Excel tetap dibaca sebagai data.
+- Yang disimpan **hanya desain** (kertas, ukuran label, jumlah salinan, dan elemen). Data/baris
+  tetap diimpor dari CSV atau Excel, jadi satu desain bisa dipakai untuk banyak data.
+- Tombol **Save** dan judul tab bertanda `•` selama ada perubahan yang belum disimpan — selama
+  itu, desain baru ada di browser itu saja.
+
+Berkas `.json` dibaca dengan validasi ketat: penanda `app`, nomor versi, jenis elemen, simbol, dan
+format barcode harus dikenal; semua angka dijepit ke rentang wajar; maksimal 500 elemen.
+Berkas yang bukan desain aplikasi ini, rusak, atau versi lebih baru ditolak **tanpa mengubah
+desain yang sedang dikerjakan**.
+
 ## Membuat berkas (tombol Generate)
 
 Satu tombol **Generate** di bilah atas; pilih dulu hasil yang diinginkan dari dropdown di
