@@ -5,17 +5,23 @@
 - REST API sederhana di /api/* dengan database SQLite
 - Hanya memakai pustaka standar Python (tanpa pip install)
 """
+import argparse
 import base64
 import binascii
+import getpass
+import hashlib
+import hmac
 import io
 import json
 import mimetypes
 import os
+import secrets
 import sqlite3
 import sys
 import zipfile
 from contextlib import closing
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -26,36 +32,87 @@ DB_PATH = os.environ.get("DB_PATH", str(BASE / "data" / "labels.db"))
 PORT = int(os.environ.get("PORT", "8010"))
 MAX_BODY = 64 * 1024 * 1024  # 64 MB
 MAX_ROWS = 200_000
+PBKDF2_ROUNDS = 150_000
+SESSION_DAYS = int(os.environ.get("SESSION_DAYS", "30"))
+COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "") not in ("", "0", "false", "no")
+ADMIN_USER = os.environ.get("ADMIN_USER", "")
+ADMIN_PASS = os.environ.get("ADMIN_PASS", "")
 
 mimetypes.add_type("application/javascript", ".js")
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS templates (
+TABLE_TEMPLATES = """CREATE TABLE IF NOT EXISTS templates (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    name       TEXT NOT NULL UNIQUE,
+    user_id    INTEGER NOT NULL DEFAULT 0,
+    name       TEXT NOT NULL,
     data       TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS datasets (
+    updated_at TEXT NOT NULL,
+    UNIQUE(user_id, name)
+)"""
+
+TABLE_DATASETS = """CREATE TABLE IF NOT EXISTS datasets (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    name       TEXT NOT NULL UNIQUE,
+    user_id    INTEGER NOT NULL DEFAULT 0,
+    name       TEXT NOT NULL,
     columns    TEXT NOT NULL,
     rows       TEXT NOT NULL,
     row_count  INTEGER NOT NULL,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS history (
+    updated_at TEXT NOT NULL,
+    UNIQUE(user_id, name)
+)"""
+
+TABLE_HISTORY = """CREATE TABLE IF NOT EXISTS history (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id       INTEGER NOT NULL DEFAULT 0,
     printed_at    TEXT NOT NULL,
     template_name TEXT NOT NULL DEFAULT '',
     dataset_name  TEXT NOT NULL DEFAULT '',
     total_labels  INTEGER NOT NULL DEFAULT 0,
     pages         INTEGER NOT NULL DEFAULT 0,
     page_desc     TEXT NOT NULL DEFAULT ''
-);
-"""
+)"""
+
+TABLE_USERS = """CREATE TABLE IF NOT EXISTS users (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    username   TEXT NOT NULL UNIQUE,
+    pwd_hash   TEXT NOT NULL,
+    salt       TEXT NOT NULL,
+    is_admin   INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+)"""
+
+TABLE_SESSIONS = """CREATE TABLE IF NOT EXISTS sessions (
+    token_hash TEXT PRIMARY KEY,
+    user_id    INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+)"""
+
+SCHEMA = ";\n\n".join([TABLE_TEMPLATES, TABLE_DATASETS, TABLE_HISTORY,
+                        TABLE_USERS, TABLE_SESSIONS]) + ";\n"
+
+
+def migrate_user_scope(conn):
+    """Samakan tabel lama: tambah kolom user_id dan kunci UNIQUE(user_id, name).
+
+    Tabel templates/datasets harus dibangun ulang karena UNIQUE(name) tidak bisa
+    diubah di tempat. Data lama diberi user_id 0, lalu dipindahkan ke pengguna
+    pertama yang dibuat supaya tidak hilang.
+    """
+    for table in ("templates", "datasets"):
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(%s)" % table)]
+        if "user_id" in cols:
+            continue
+        ddl = TABLE_TEMPLATES if table == "templates" else TABLE_DATASETS
+        keep = ", ".join(cols)
+        conn.execute("ALTER TABLE %s RENAME TO %s_before_users" % (table, table))
+        conn.execute(ddl)
+        conn.execute("INSERT INTO %s (%s) SELECT %s FROM %s_before_users" % (table, keep, keep, table))
+        conn.execute("DROP TABLE %s_before_users" % table)
+    history_cols = [r[1] for r in conn.execute("PRAGMA table_info(history)")]
+    if "user_id" not in history_cols:
+        conn.execute("ALTER TABLE history ADD COLUMN user_id INTEGER NOT NULL DEFAULT 0")
 
 
 def now():
@@ -73,7 +130,139 @@ def init_db():
     with closing(connect()) as conn:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript(SCHEMA)
-        conn.commit()
+        with conn:  # commit / rollback otomatis
+            migrate_user_scope(conn)
+            purge_sessions(conn)
+
+
+# ---------------------------------------------------------------- auth
+def hex_of(value):
+    """bytes punya .hex(), objek HASH punya .hexdigest() - ambil yang tersedia."""
+    return value.hex() if hasattr(value, "hex") else value.hexdigest()
+
+
+def hash_password(password, salt):
+    return hex_of(hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"),
+                                      salt.encode("utf-8"), PBKDF2_ROUNDS))
+
+
+def token_hash(token):
+    """Sesi disimpan sebagai hash, jadi bocornya isi tabel tidak langsung memberi akses."""
+    return hex_of(hashlib.sha256(token.encode("utf-8")))
+
+
+def clean_username(value):
+    if not isinstance(value, str):
+        return ""
+    return "".join(ch for ch in value.strip() if ch.isprintable())[:40]
+
+
+def public_user(row):
+    return {"id": row["id"], "username": row["username"], "is_admin": bool(row["is_admin"])}
+
+
+def create_user(conn, username, password, is_admin=False):
+    username = clean_username(username)
+    if len(username) < 3:
+        raise ValueError("Nama pengguna minimal 3 karakter.")
+    if not isinstance(password, str) or len(password) < 6:
+        raise ValueError("Kata sandi minimal 6 karakter.")
+    if conn.execute("SELECT 1 FROM users WHERE username=?", (username,)).fetchone():
+        raise ValueError("Nama pengguna '%s' sudah ada." % username)
+    salt = secrets.token_hex(16)
+    ts = now()
+    cur = conn.execute(
+        "INSERT INTO users (username, pwd_hash, salt, is_admin, created_at) VALUES (?,?,?,?,?)",
+        (username, hash_password(password, salt), salt, 1 if is_admin else 0, ts),
+    )
+    uid = cur.lastrowid
+    # data lama (user_id 0) sekarang jadi milik pengguna pertama
+    for table in ("templates", "datasets", "history"):
+        conn.execute("UPDATE %s SET user_id=? WHERE user_id=0" % table, (uid,))
+    return uid
+
+
+def check_password(conn, username, password):
+    row = conn.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
+    if row is None or not isinstance(password, str):
+        return None
+    candidate = hash_password(password, row["salt"])
+    if not hmac.compare_digest(candidate, row["pwd_hash"]):
+        return None
+    return row
+
+
+def start_session(conn, user_id):
+    token = secrets.token_urlsafe(32)
+    expires = datetime.now(timezone.utc) + timedelta(days=SESSION_DAYS)
+    conn.execute(
+        "INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?,?,?,?)",
+        (token_hash(token), user_id, now(), expires.strftime("%Y-%m-%dT%H:%M:%SZ")),
+    )
+    return token
+
+
+def session_user(conn, token):
+    if not token:
+        return None
+    row = conn.execute(
+        """SELECT u.id, u.username, u.is_admin, s.expires_at
+           FROM sessions s JOIN users u ON u.id = s.user_id
+           WHERE s.token_hash = ?""", (token_hash(token),)).fetchone()
+    if row is None:
+        return None
+    if row["expires_at"] < now():
+        conn.execute("DELETE FROM sessions WHERE token_hash=?", (token_hash(token),))
+        return None
+    return public_user(row)
+
+
+def end_session(conn, token):
+    if token:
+        conn.execute("DELETE FROM sessions WHERE token_hash=?", (token_hash(token),))
+
+
+def purge_sessions(conn):
+    conn.execute("DELETE FROM sessions WHERE expires_at < ?", (now(),))
+
+
+def session_cookie(token, max_age):
+    parts = ["sid=%s" % token, "Path=/", "HttpOnly", "SameSite=Lax"]
+    if max_age is not None:
+        parts.append("Max-Age=%d" % max_age)
+    if COOKIE_SECURE:
+        parts.append("Secure")
+    return "; ".join(parts)
+
+
+def ensure_admin(conn):
+    """Buat pengguna pertama kalau database masih kosong.
+
+    Kalau ADMIN_USER + ADMIN_PASS diset, quietly dibuat. Selain itu kata sandi
+    acak dicetak ke log supaya bisa dipakai sekali lalu diganti.
+    """
+    if conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"]:
+        return
+    username = clean_username(ADMIN_USER) or "admin"
+    if username and ADMIN_PASS:
+        try:
+            create_user(conn, username, ADMIN_PASS, is_admin=True)
+            print("Pengguna admin '%s' dibuat dari environment." % username, flush=True)
+            return
+        except ValueError as exc:
+            sys.stderr.write("Gagal membuat admin dari environment: %s\n" % exc)
+            return
+    password = secrets.token_urlsafe(9)
+    try:
+        create_user(conn, username, password, is_admin=True)
+        print("=" * 62, flush=True)
+        print("Pengguna admin dibuat (database baru). Catat sebelum lupa:", flush=True)
+        print("    nama pengguna : %s" % username, flush=True)
+        print("    kata sandi    : %s" % password, flush=True)
+        print("Ubah dengan: python server.py --set-password %s" % username, flush=True)
+        print("=" * 62, flush=True)
+    except ValueError as exc:
+        sys.stderr.write("Gagal membuat admin: %s\n" % exc)
 
 
 class ApiError(Exception):
@@ -107,22 +296,22 @@ def to_float(value, default=0.0):
 
 
 # ---------------------------------------------------------------- handlers
-def templates_list(conn):
+def templates_list(conn, uid):
     rows = conn.execute(
-        "SELECT id, name, updated_at FROM templates ORDER BY name COLLATE NOCASE"
-    ).fetchall()
+        "SELECT id, name, updated_at FROM templates WHERE user_id=? ORDER BY name COLLATE NOCASE",
+        (uid,)).fetchall()
     return [dict(r) for r in rows]
 
 
-def templates_get(conn, rid):
-    r = conn.execute("SELECT * FROM templates WHERE id=?", (rid,)).fetchone()
+def templates_get(conn, rid, uid):
+    r = conn.execute("SELECT * FROM templates WHERE id=? AND user_id=?", (rid, uid)).fetchone()
     if not r:
         raise ApiError(404, "Templat tidak ditemukan.")
     return {"id": r["id"], "name": r["name"], "updated_at": r["updated_at"],
             "data": json.loads(r["data"])}
 
 
-def templates_save(conn, body):
+def templates_save(conn, body, uid):
     name = clean_name(body.get("name"))
     data = body.get("data")
     if not isinstance(data, dict) or not isinstance(data.get("elements"), list) \
@@ -130,30 +319,30 @@ def templates_save(conn, body):
         raise ApiError(400, "Data templat tidak valid.")
     ts = now()
     conn.execute(
-        """INSERT INTO templates (name, data, created_at, updated_at) VALUES (?,?,?,?)
-           ON CONFLICT(name) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at""",
-        (name, json.dumps(data, ensure_ascii=False), ts, ts),
+        """INSERT INTO templates (user_id, name, data, created_at, updated_at) VALUES (?,?,?,?,?)
+           ON CONFLICT(user_id, name) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at""",
+        (uid, name, json.dumps(data, ensure_ascii=False), ts, ts),
     )
-    rid = conn.execute("SELECT id FROM templates WHERE name=?", (name,)).fetchone()["id"]
+    rid = conn.execute("SELECT id FROM templates WHERE user_id=? AND name=?", (uid, name)).fetchone()["id"]
     return {"id": rid, "name": name}
 
 
-def datasets_list(conn):
+def datasets_list(conn, uid):
     rows = conn.execute(
-        "SELECT id, name, row_count, updated_at FROM datasets ORDER BY name COLLATE NOCASE"
-    ).fetchall()
+        "SELECT id, name, row_count, updated_at FROM datasets WHERE user_id=? ORDER BY name COLLATE NOCASE",
+        (uid,)).fetchall()
     return [dict(r) for r in rows]
 
 
-def datasets_get(conn, rid):
-    r = conn.execute("SELECT * FROM datasets WHERE id=?", (rid,)).fetchone()
+def datasets_get(conn, rid, uid):
+    r = conn.execute("SELECT * FROM datasets WHERE id=? AND user_id=?", (rid, uid)).fetchone()
     if not r:
         raise ApiError(404, "Data tidak ditemukan.")
     return {"id": r["id"], "name": r["name"], "row_count": r["row_count"],
             "columns": json.loads(r["columns"]), "rows": json.loads(r["rows"])}
 
 
-def datasets_save(conn, body):
+def datasets_save(conn, body, uid):
     name = clean_name(body.get("name"))
     columns = body.get("columns")
     rows = body.get("rows")
@@ -165,37 +354,39 @@ def datasets_save(conn, body):
         raise ApiError(400, "Baris data tidak valid (maksimal %d baris)." % MAX_ROWS)
     ts = now()
     conn.execute(
-        """INSERT INTO datasets (name, columns, rows, row_count, created_at, updated_at)
-           VALUES (?,?,?,?,?,?)
-           ON CONFLICT(name) DO UPDATE SET columns=excluded.columns, rows=excluded.rows,
+        """INSERT INTO datasets (user_id, name, columns, rows, row_count, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?)
+           ON CONFLICT(user_id, name) DO UPDATE SET columns=excluded.columns, rows=excluded.rows,
                row_count=excluded.row_count, updated_at=excluded.updated_at""",
-        (name, json.dumps(columns, ensure_ascii=False),
+        (uid, name, json.dumps(columns, ensure_ascii=False),
          json.dumps(rows, ensure_ascii=False), len(rows), ts, ts),
     )
-    rid = conn.execute("SELECT id FROM datasets WHERE name=?", (name,)).fetchone()["id"]
+    rid = conn.execute("SELECT id FROM datasets WHERE user_id=? AND name=?", (uid, name)).fetchone()["id"]
     return {"id": rid, "name": name, "row_count": len(rows)}
 
 
-def history_list(conn):
-    rows = conn.execute("SELECT * FROM history ORDER BY id DESC LIMIT 50").fetchall()
+def history_list(conn, uid):
+    rows = conn.execute(
+        "SELECT * FROM history WHERE user_id=? ORDER BY id DESC LIMIT 50", (uid,)).fetchall()
     return [dict(r) for r in rows]
 
 
-def history_add(conn, body):
+def history_add(conn, body, uid):
     conn.execute(
-        """INSERT INTO history (printed_at, template_name, dataset_name, total_labels, pages, page_desc)
-           VALUES (?,?,?,?,?,?)""",
-        (now(), str(body.get("template_name") or "")[:120], str(body.get("dataset_name") or "")[:120],
+        """INSERT INTO history (user_id, printed_at, template_name, dataset_name, total_labels, pages, page_desc)
+           VALUES (?,?,?,?,?,?,?)""",
+        (uid, now(), str(body.get("template_name") or "")[:120], str(body.get("dataset_name") or "")[:120],
          to_int(body.get("total_labels")), to_int(body.get("pages")),
          str(body.get("page_desc") or "")[:200]),
     )
     # simpan maksimal 1000 riwayat terakhir
-    conn.execute("DELETE FROM history WHERE id NOT IN (SELECT id FROM history ORDER BY id DESC LIMIT 1000)")
+    conn.execute("DELETE FROM history WHERE user_id=? AND id NOT IN "
+                 "(SELECT id FROM history WHERE user_id=? ORDER BY id DESC LIMIT 1000)", (uid, uid))
     return {"ok": True}
 
 
-def delete_row(conn, table, rid):
-    cur = conn.execute("DELETE FROM %s WHERE id=?" % table, (rid,))
+def delete_row(conn, table, rid, uid):
+    cur = conn.execute("DELETE FROM %s WHERE id=? AND user_id=?" % table, (rid, uid))
     if cur.rowcount == 0:
         raise ApiError(404, "Data tidak ditemukan.")
     return {"ok": True}
@@ -465,12 +656,14 @@ class Handler(BaseHTTPRequestHandler):
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
 
     # -- helpers
-    def send_json(self, status, obj):
+    def send_json(self, status, obj, cookie=None):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        if cookie:
+            self.send_header("Set-Cookie", cookie)
         self.end_headers()
         self.wfile.write(body)
 
@@ -499,7 +692,7 @@ class Handler(BaseHTTPRequestHandler):
         return data
 
     # -- API routing
-    def api(self, method, path):
+    def api(self, method, path, user):
         parts = [p for p in path[len("/api/"):].split("/") if p]
         if not parts:
             raise ApiError(404, "Endpoint tidak ditemukan.")
@@ -512,6 +705,7 @@ class Handler(BaseHTTPRequestHandler):
         if res == "health" and method == "GET":
             return {"ok": True}
 
+        uid = user["id"]
         body = self.read_json() if method == "POST" else None
         with closing(connect()) as conn:
             with conn:  # commit / rollback otomatis
@@ -520,31 +714,88 @@ class Handler(BaseHTTPRequestHandler):
                                       if res == "templates"
                                       else (datasets_list, datasets_get, datasets_save))
                     if method == "GET" and rid is None:
-                        return lst(conn)
+                        return lst(conn, uid)
                     if method == "GET":
-                        return get(conn, rid)
+                        return get(conn, rid, uid)
                     if method == "POST" and rid is None:
-                        return save(conn, body)
+                        return save(conn, body, uid)
                     if method == "DELETE" and rid is not None:
-                        return delete_row(conn, res, rid)
+                        return delete_row(conn, res, rid, uid)
                 elif res == "history":
                     if method == "GET" and rid is None:
-                        return history_list(conn)
+                        return history_list(conn, uid)
                     if method == "POST" and rid is None:
-                        return history_add(conn, body)
+                        return history_add(conn, body, uid)
                     if method == "DELETE" and rid is None:
-                        conn.execute("DELETE FROM history")
+                        conn.execute("DELETE FROM history WHERE user_id=?", (uid,))
                         return {"ok": True}
         raise ApiError(404, "Endpoint tidak ditemukan.")
 
-    def handle_api(self, method):
-        path = urlparse(self.path).path
+    # -- auth
+    def session_token(self):
+        jar = SimpleCookie()
         try:
-            if method == "POST" and path.rstrip("/") == "/api/xlsx":
+            jar.load(self.headers.get("Cookie") or "")
+        except Exception:  # noqa: BLE001 - cookie rusak tidak boleh mematikan server
+            return None
+        morsel = jar.get("sid")
+        return morsel.value if morsel else None
+
+    def current_user(self):
+        with closing(connect()) as conn:
+            return session_user(conn, self.session_token())
+
+    def handle_login(self):
+        body = self.read_json()
+        username = clean_username(body.get("username"))
+        password = body.get("password")
+        if not username or not isinstance(password, str) or not password:
+            raise ApiError(400, "Nama pengguna dan kata sandi wajib diisi.")
+        with closing(connect()) as conn:
+            with conn:
+                row = check_password(conn, username, password)
+                if row is None:
+                    raise ApiError(401, "Nama pengguna atau kata sandi salah.")
+                token = start_session(conn, row["id"])
+                user = public_user(row)
+        self.send_json(200, {"user": user},
+                       cookie=session_cookie(token, SESSION_DAYS * 24 * 3600))
+
+    def handle_logout(self):
+        token = self.session_token()
+        with closing(connect()) as conn:
+            with conn:
+                end_session(conn, token)
+        self.send_json(200, {"ok": True}, cookie=session_cookie("", 0))
+
+    def handle_api(self, method):
+        path = urlparse(self.path).path.rstrip("/") or "/api"
+        try:
+            if path in ("/api/health", "/api/login", "/api/me"):
+                if path == "/api/login" and method == "POST":
+                    self.handle_login()
+                    return
+                if path == "/api/me":
+                    self.send_json(200, {"user": self.current_user()})
+                    return
+                if method == "GET":
+                    self.send_json(200, {"ok": True})
+                    return
+                raise ApiError(404, "Endpoint tidak ditemukan.")
+
+            user = self.current_user()
+            if user is None:
+                self.send_json(401, {"error": "Belum masuk. Silakan masuk lagi."})
+                return
+            if path == "/api/logout" and method == "POST":
+                self.handle_logout()
+                return
+
+            if method == "POST" and path == "/api/xlsx":
                 data, filename = xlsx_report(self.read_json())
                 self.send_bytes(data, XLSX_MIME, filename)
                 return
-            self.send_json(200, self.api(method, path))
+            self.send_json(200, self.api(method, path, user))
         except ApiError as e:
             self.send_json(e.status, {"error": e.message})
         except sqlite3.Error as e:
@@ -611,7 +862,63 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Aplikasi cetak label")
+    parser.add_argument("--add-user", metavar="NAMA",
+                        help="tambah pengguna baru (bertanya kata sandi)")
+    parser.add_argument("--set-password", metavar="NAMA",
+                        help="ganti kata sandi pengguna")
+    parser.add_argument("--del-user", metavar="NAMA", help="hapus pengguna")
+    parser.add_argument("--list-users", action="store_true", help="daftar pengguna")
+    args = parser.parse_args()
+
     init_db()
+    with closing(connect()) as conn:
+        with conn:
+            if args.add_user:
+                password = getpass.getpass("Kata sandi untuk %s: " % args.add_user)
+                again = getpass.getpass("Ulangi: ")
+                if password != again:
+                    sys.exit("Kata sandi tidak sama.")
+                uid = create_user(conn, args.add_user, password,
+                                  is_admin=not conn.execute("SELECT 1 FROM users").fetchone())
+                print("Pengguna '%s' dibuat (id=%d)." % (clean_username(args.add_user), uid))
+                return
+            if args.set_password:
+                row = conn.execute("SELECT id FROM users WHERE username=?",
+                                   (clean_username(args.set_password),)).fetchone()
+                if row is None:
+                    sys.exit("Pengguna '%s' tidak ada." % args.set_password)
+                password = getpass.getpass("Kata sandi baru: ")
+                again = getpass.getpass("Ulangi: ")
+                if password != again:
+                    sys.exit("Kata sandi tidak sama.")
+                salt = secrets.token_hex(16)
+                conn.execute("UPDATE users SET pwd_hash=?, salt=? WHERE id=?",
+                             (hash_password(password, salt), salt, row["id"]))
+                conn.execute("DELETE FROM sessions WHERE user_id=?", (row["id"],))
+                print("Kata sandi '%s' diganti; semua sesinya dikeluarkan." % args.set_password)
+                return
+            if args.del_user:
+                row = conn.execute("SELECT id FROM users WHERE username=?",
+                                   (clean_username(args.del_user),)).fetchone()
+                if row is None:
+                    sys.exit("Pengguna '%s' tidak ada." % args.del_user)
+                conn.execute("DELETE FROM sessions WHERE user_id=?", (row["id"],))
+                conn.execute("DELETE FROM users WHERE id=?", (row["id"],))
+                print("Pengguna '%s' dihapus. Templat dan datanya tidak ikut terhapus."
+                      % args.del_user)
+                return
+            if args.list_users:
+                rows = conn.execute("SELECT id, username, is_admin, created_at FROM users "
+                                    "ORDER BY id").fetchall()
+                if not rows:
+                    print("Belum ada pengguna.")
+                for r in rows:
+                    print("%3d  %-20s %-8s %s" % (r["id"], r["username"],
+                                                   "admin" if r["is_admin"] else "user", r["created_at"]))
+                return
+            ensure_admin(conn)
+
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     print("Aplikasi label berjalan di http://0.0.0.0:%d  (database: %s)" % (PORT, DB_PATH), flush=True)
     try:

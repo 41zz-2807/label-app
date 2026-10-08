@@ -88,8 +88,14 @@ details.hist summary{cursor:pointer;color:var(--muted);font-size:12.5px}
 .toolbar{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center;justify-content:space-between}
 .nav{display:flex;align-items:center;gap:8px}
 .nav .btn{padding:4px 11px}
-.roomf{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
-.roomf input{width:150px;padding:6px 9px;border:1px solid var(--line);background:var(--field);border-radius:6px}
+.who{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
+.who b{color:var(--ink);font-weight:600}
+.login{position:fixed;inset:0;background:rgba(12,14,18,.72);display:flex;align-items:center;justify-content:center;padding:20px;z-index:50}
+.logincard{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px;width:100%;max-width:330px;box-shadow:0 18px 50px rgba(0,0,0,.45)}
+.logincard h2{margin:0 0 4px;font-size:17px}
+.logincard p{margin:0 0 14px;color:var(--muted);font-size:13px}
+.logincard .stack{gap:10px}
+.logincard .err{min-height:18px;font-size:13px;color:var(--danger)}
 .xlsx{display:flex;align-items:center;gap:8px}
 .xlsx select{border:1px solid var(--line);background:var(--field);color:var(--ink);border-radius:6px;padding:9px 12px}
 .xlsx select:hover{border-color:var(--muted)}
@@ -123,7 +129,7 @@ details.hist summary{cursor:pointer;color:var(--muted);font-size:12.5px}
 </style>
 </head>
 <body>
-<div class="app">
+<div class="app" id="app">
   <aside class="side">
     <header class="brand">
       <h1>Cetak label dari data</h1>
@@ -248,9 +254,10 @@ details.hist summary{cursor:pointer;color:var(--muted);font-size:12.5px}
         <span id="rowLabel" class="small" style="min-width:110px;text-align:center"></span>
         <button class="btn" id="next" aria-label="Baris berikutnya">&rsaquo;</button>
       </div>
-      <label class="roomf" title="Nama ruang kerja. Kalau browser ini dipakai lebih dari satu orang, ganti agar tiap orang punya draft sendiri.">
-        <span>Ruang</span><input type="text" id="roomName" maxlength="40" spellcheck="false" autocomplete="off">
-      </label>
+      <div class="who">
+        <span id="whoName" title="Pengguna yang sedang masuk"></span>
+        <button class="btn" id="logout" title="Keluar dari akun ini">Keluar</button>
+      </div>
       <div class="xlsx">
         <select id="xmode" aria-label="Yang akan dibuat" title="Pilih hasil yang akan dibuat">
           <option value="pdf">PDF label</option>
@@ -269,14 +276,32 @@ details.hist summary{cursor:pointer;color:var(--muted);font-size:12.5px}
   </main>
 </div>
 
+<div class="login hide" id="login">
+  <form class="logincard" id="loginForm" autocomplete="on">
+    <h2>Cetak label</h2>
+    <p>Masuk dulu. Templat, data, dan riwayat cetak tersimpan terpisah untuk tiap pengguna.</p>
+    <div class="stack">
+      <label class="f"><span>Nama pengguna</span>
+        <input type="text" id="loginUser" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+      </label>
+      <label class="f"><span>Kata sandi</span>
+        <input type="password" id="loginPass" autocomplete="current-password" required>
+      </label>
+      <div class="err" id="loginErr" role="alert"></div>
+      <button class="btn primary" id="loginBtn" type="submit">Masuk</button>
+      <p class="muted small" style="margin:0">Belum punya akun? Ditambahkan oleh admin lewat
+        <code>python server.py --add-user NAMA</code>.</p>
+    </div>
+  </form>
+</div>
+
 <script>
 (function(){
 "use strict";
 const $ = (s,r=document)=>r.querySelector(s);
 const PT = 0.352778, LH = 1.15;
 const PAGES = {A4:[210,297],A5:[148,210],A3:[297,420],Letter:[215.9,279.4],F4:[215,330]};
-const KEY = 'labelmaker:v1:';       // awalan draft desain; dilanjuti nama ruang kerja
-const ROOM_KEY = 'labelmaker:ruang';
+const KEY = 'labelmaker:v1:';       // awalan draft desain; dilanjuti nama pengguna
 let uid = 1;
 
 if (window.qrcode && qrcode.stringToBytesFuncs && qrcode.stringToBytesFuncs['UTF-8']) {
@@ -308,36 +333,13 @@ const SAMPLE = {
 };
 const state = Object.assign(defaultTemplate(), {
   columns:[], rows:[], isSample:true, source:{names:[],sheets:{},current:''},
-  qtyCol:'', copies:1, sel:0, rowIdx:0
+  qtyCol:'', copies:1, sel:0, rowIdx:0, user:null
 });
 state.elements.forEach(e=>e.id=uid++);
 
-function roomName(){
-  try{ return (localStorage.getItem(ROOM_KEY)||'').trim(); }catch(_){ return ''; }
-}
-function saveRoom(n){
-  try{ localStorage.setItem(ROOM_KEY,n); }catch(_){}
-}
-function draftKey(){ return KEY+(roomName()||'umum'); }
-function randomRoom(){
-  return 'Ruang-'+Math.random().toString(36).slice(2,7);
-}
-function cleanRoom(v){
-  return String(v==null?'':v).replace(/[\r\n\t]+/g,' ').trim().slice(0,40);
-}
-/* Ganti ruang: kembali ke templat awal, lalu muat draft milik ruang itu. */
-function switchRoom(){
-  const n=cleanRoom($('#roomName').value)||'umum';
-  $('#roomName').value=n; saveRoom(n);
-  const d=defaultTemplate();
-  state.page=Object.assign({},d.page);
-  state.label=Object.assign({},d.label);
-  state.elements=d.elements.map(e=>Object.assign({id:uid++},e));
-  state.copies=1; state.sel=0; state.qtyCol=''; state.rowIdx=0;
-  loadSaved();
-  initInputs(); renderData(); renderProps(); update();
-  setStatus('Berpindah ke ruang "'+n+'". Draft desain ruang ini dimuat.');
-}
+/* Draft desain disimpan per pengguna, jadi orang berbeda tidak saling menimpa
+   walau memakai browser dan komputer yang sama. */
+function draftKey(){ return KEY+(state.user ? state.user.username : 'belum-masuk'); }
 
 function loadSaved(){
   try{
@@ -351,6 +353,7 @@ function loadSaved(){
   }catch(_){}
 }
 function persist(){
+  if(!state.user) return;   // belum masuk: jangan tulis draft ke localStorage
   try{
     localStorage.setItem(draftKey(), JSON.stringify({page:state.page,label:state.label,elements:state.elements,copies:state.copies}));
   }catch(_){}
@@ -1200,15 +1203,65 @@ document.addEventListener('keydown',e=>{
 if(window.ResizeObserver) new ResizeObserver(()=>{ if(!drag) renderPreview(); }).observe($('#mat'));
 else window.addEventListener('resize',renderPreview);
 
+/* ---------- login & sesi ---------- */
+function showLogin(message){
+  $('#login').classList.remove('hide');
+  $('#loginErr').textContent=message||'';
+  $('#loginBtn').disabled=false;
+  if(!$('#loginUser').value) $('#loginUser').focus();
+}
+function hideLogin(){ $('#login').classList.add('hide'); $('#loginErr').textContent=''; }
+function resetDesign(){
+  const d=defaultTemplate();
+  state.page=Object.assign({},d.page);
+  state.label=Object.assign({},d.label);
+  state.elements=d.elements.map(e=>Object.assign({id:uid++},e));
+  state.copies=1; state.sel=0; state.qtyCol=''; state.rowIdx=0;
+}
+async function afterLogin(user){
+  state.user=user;
+  resetDesign(); loadSaved();
+  $('#whoName').innerHTML='Masuk sebagai <b></b>';
+  $('#whoName').querySelector('b').textContent=user.username;
+  hideLogin();
+  initInputs(); renderData(); renderProps(); update();
+  await initDb();
+  setStatus('Selamat datang, '+user.username+'.');
+}
+async function doLogin(e){
+  if(e) e.preventDefault();
+  const btn=$('#loginBtn'), user=$('#loginUser').value.trim(), pass=$('#loginPass').value;
+  if(!user || !pass){ $('#loginErr').textContent='Nama pengguna dan kata sandi wajib diisi.'; return; }
+  btn.disabled=true; $('#loginErr').textContent='';
+  try{
+    const res=await api('/login',{method:'POST',body:{username:user,password:pass}});
+    $('#loginPass').value='';
+    await afterLogin(res.user);
+  }catch(err){
+    showLogin(err.message);
+  }
+}
+async function doLogout(){
+  try{ await api('/logout',{method:'POST'}); }catch(_){}
+  state.user=null;
+  $('#dbSec').classList.add('hide');
+  $('#whoName').textContent='';
+  resetDesign(); update();
+  showLogin('Anda sudah keluar. Masuk lagi untuk melanjutkan.');
+}
+
 /* ---------- penyimpanan SQLite (backend) ---------- */
-let dbOn=false;
+let dbOn=false, dbWired=false;
 async function api(path,opt){
-  const o=Object.assign({},opt||{});
+  const o=Object.assign({credentials:'same-origin'},opt||{});
   if(o.body && typeof o.body!=='string') o.body=JSON.stringify(o.body);
   o.headers=Object.assign({'Content-Type':'application/json'},o.headers||{});
   const r=await fetch('/api'+path,o);
   let data=null; try{ data=await r.json(); }catch(_){}
-  if(!r.ok) throw new Error((data && data.error) || r.statusText || 'Permintaan gagal');
+  if(!r.ok){
+    if(r.status===401 && !/\/(login|me)$/.test(path)) showLogin('Sesi berakhir. Silakan masuk lagi.');
+    throw new Error((data && data.error) || r.statusText || 'Permintaan gagal');
+  }
   return data;
 }
 function fillSelect(sel,items,labelFn,emptyText){
@@ -1252,8 +1305,10 @@ async function logHistory(entry){
   try{ await api('/history',{method:'POST',body:entry}); refreshDb(); }catch(_){}
 }
 async function initDb(){
-  try{ await api('/health'); }catch(_){ return; }
+  try{ const me=await api('/me'); if(!me || !me.user) return; }catch(_){ return; }
   dbOn=true; $('#dbSec').classList.remove('hide');
+  if(dbWired){ await refreshDb(); return; }   // listener cukup dipasang sekali
+  dbWired=true;
   $('#tplSel').addEventListener('change',()=>{ const n=selName($('#tplSel')); if(n) $('#tplName').value=n; });
   $('#dsSel').addEventListener('change',()=>{ const n=selName($('#dsSel')); if(n) $('#dsName').value=n; });
   $('#tplSave').addEventListener('click',async()=>{
@@ -1308,14 +1363,18 @@ async function initDb(){
 }
 
 /* ---------- init ---------- */
-if(!roomName()) saveRoom(randomRoom());
-$('#roomName').value=roomName();
-$('#roomName').addEventListener('change',switchRoom);
-loadSaved();
+$('#loginForm').addEventListener('submit',doLogin);
+$('#logout').addEventListener('click',doLogout);
 state.source={names:['Data'],sheets:{Data:[SAMPLE.cols].concat(SAMPLE.rows)},current:'Data'};
 applySheet('Data');
 initInputs(); renderData(); renderProps(); update();
-initDb();
+(async()=>{
+  try{
+    const me=await api('/me');
+    if(me && me.user){ await afterLogin(me.user); return; }
+    showLogin();
+  }catch(_){ showLogin('Tidak bisa menghubungi server. Muat ulang halaman.'); }
+})();
 })();
 </script>
 </body>

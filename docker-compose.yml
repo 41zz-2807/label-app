@@ -7,6 +7,12 @@ services:
     environment:
       PORT: "8010"
       DB_PATH: /app/data/labels.db
+      # pengguna pertama dibuat dari sini (hanya dipakai saat database masih kosong)
+      ADMIN_USER: "${ADMIN_USER:-}"
+      ADMIN_PASS: "${ADMIN_PASS:-}"
+      # set 1 kalau aplikasi diakses lewat HTTPS di belakang reverse proxy
+      COOKIE_SECURE: "${COOKIE_SECURE:-0}"
+      SESSION_DAYS: "${SESSION_DAYS:-30}"
     volumes:
       # database SQLite tersimpan di folder ./data pada proyek ini
       - ./data:/app/data

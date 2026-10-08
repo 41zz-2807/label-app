@@ -56,7 +56,16 @@ docker compose up -d --build      # bangun ulang setelah mengubah kode
   tersebut manual dengan nama sama. SheetJS sudah ada, jadi ekspor/ekspor-impor `.xlsx`
   tidak menambah dependensi.
 - `static/index.html` berisi seluruh UI **dan** logika dalam satu IIFE, tanpa framework.
-- Draft desain disimpan di `localStorage` dengan kunci **per ruang kerja**
+- **Semua data punya pemilik.** `templates`, `datasets`, `history` punya kolom `user_id` dan
+  kuncinya `UNIQUE(user_id, name)` — jangan pernah membuat kueri tanpa `WHERE user_id=?`, itu
+  berarti data orang lain bocor. Query silang harus balas 404, bukan 403.
+- Sesi: cookie `sid` berisi token acak, sedangkan tabel `sessions` menyimpan **hash**-nya
+  (`token_hash()`). Perbandingan waktu untuk kata sandi pakai `hmac.compare_digest`.
+  `expires_at` harus formatnya sama persis dengan `now()` (`%Y-%m-%dT%H:%M:%SZ`) karena
+  dibandingkan sebagai string.
+- `hashlib.sha256()` menghasilkan objek yang hanya punya `.hexdigest()`, sedangkan
+  `pbkdf2_hmac()` mengembalikan `bytes` yang punya `.hex()`. Pakai `hex_of()` untuk keduanya.
+- Draft desain disimpan di `localStorage` dengan kunci **per pengguna**
   (`labelmaker:v1:<nama>`), bukan satu kunci global. `draftKey()` adalah satu-satunya jalan
   untuk membentuk kunci itu — jangan pernah `localStorage.setItem('labelmaker:v1', ...)`
   langsung, karena itu akan kembali membuat orang berbeda saling menimpa.

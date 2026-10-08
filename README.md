@@ -51,22 +51,6 @@ Catatan:
 - Yang tertanam adalah hasil render browser, jadi font mengikuti sistem. Judul teks memakai
   pemenggalan baris yang sama dengan pratinjau dan PDF (`textLayout`).
 
-## Ruang kerja (dipakai bersama orang lain)
-
-Draft desain disimpan di `localStorage` browser dengan kunci per ruang kerja
-(`labelmaker:v1:<nama ruang>`). Field **Ruang** di bilah atas menentukan ruang mana yang
-dipakai. Jadi:
-
-- Satu orang tidak melihat pekerjaan orang lain, walau di browser dan komputer yang sama.
-- Beralih ruang = mengembalikan desain ke templat awal **lalu memuat draft milik ruang itu**.
-- Nama ruang tersimpan sendiri, jadi orang yang sama tetap dapatelah kembali ke ruangnya.
-- Kalau browser dipakai bergantian, **ganti nama Ruang sebelum mulai mengedit** — kalau tidak,
-  draft terakhir yang dipakai akan ikut terbawa.
-
-Yang **belum** dipisah per ruang: templat, data, dan riwayat cetak di panel "Tersimpan di
-database" — itu milik bersama di server. Kalau panel itu tidak dipakai, tidak ada yang perlu
-dikhawatirkan. (Alternatifnya: sembunyikan panelnya, atau tambahkan kolom pemilik di server.)
-
 ## Elemen di dalam label
 
 | Jenis | Isi |
@@ -81,6 +65,41 @@ Semua elemen bisa digeser dan diperbesar lewat gagang kuning di pojok elemen, at
  angkanya di panel properti. Simbol dan garis digambar sebagai **vektor** (bukan gambar),
 jadi tetap tajam di PDF berapa pun ukurannya dan tidak bergantung pada font.
 
+## Login dan pengguna
+
+Aplikasi minta masuk dulu. **Templat, data, riwayat cetak, dan draft desain disimpan terpisah
+untuk tiap pengguna** — dua orang bisa memakai nama yang sama tanpa saling menimpa.
+
+- Sesi disimpan di cookie `sid` (`HttpOnly`, `SameSite=Lax`) yang isinya **hash SHA-256** dari
+  token acak, jadi bocornya isi tabel `sessions` tidak langsung memberi akses. Berlaku 30 hari
+  (ubah dengan `SESSION_DAYS`), lalu otomatis kedaluwarsa.
+- Kata sandi disimpan dengan PBKDF2-HMAC-SHA256 150.000 iterasi + salt acak, tidak pernah polos.
+- Draft desain di `localStorage` memakai kunci per pengguna (`labelmaker:v1:<nama>`), jadi orang
+  berbeda tidak saling menimpa walau satu browser.
+- Semua endpoint `/api/*` menolak tanpa sesi (401). Yang terbuka hanya `/api/health`, `/api/me`,
+  dan `/api/login`.
+
+### Membuat pengguna
+
+Pengguna pertama dibuat otomatis saat aplikasi pertama jalan. Kalau `ADMIN_USER` + `ADMIN_PASS`
+diset di `docker-compose.yml`, itu yang dipakai. Kalau tidak, kata sandi acak dicetak ke log:
+
+```bash
+docker compose logs | grep -A3 "Pengguna admin"
+```
+
+Setelah itu, menambah atau mengubah pengguna lewat CLI di dalam container:
+
+```bash
+docker compose exec label-app python server.py --add-user budi     # asks password twice
+docker compose exec label-app python server.py --list-users
+docker compose exec label-app python server.py --set-password budi
+docker compose exec label-app python server.py --del-user budi     # his data stays
+```
+
+Kata sandi minimal 6 karakter, nama pengguna minimal 3 karakter dan harus unik.
+`--set-password` sekaligus mengeluarkan semua sesi pengguna tersebut.
+
 ## Database SQLite
 
 - File database: `./data/labels.db` (folder `data/` di-mount ke `/app/data` di container,
@@ -93,12 +112,17 @@ Tabel:
 
 | Tabel | Isi |
 |---|---|
-| `templates` | Templat label (ukuran kertas, ukuran label, elemen), nama unik |
-| `datasets` | Data CSV/Excel yang disimpan (kolom + baris), nama unik |
+| `users` | Nama pengguna, hash kata sandi, salt, tanda admin |
+| `sessions` | Token sesi (disimpan sebagai hash), pengguna, masa berlaku |
+| `templates` | Templat label (ukuran kertas, ukuran label, elemen), unik **per pengguna** |
+| `datasets` | Data CSV/Excel yang disimpan (kolom + baris), unik **per pengguna** |
 | `history` | Riwayat cetak: waktu, templat, data, jumlah label, jumlah halaman |
 
-Menyimpan dengan nama yang sudah ada akan menimpa isi lama (upsert).
-Riwayat dibatasi 1000 entri terakhir.
+Menyimpan dengan nama yang sudah ada akan menimpa isi lama (upsert) — **di dalam milik pengguna
+yang sedang login**. Riwayat dibatasi 1000 entri terakhir per pengguna.
+
+Templat, data, dan riwayat yang ada sebelum login pertama akan menjadi milik **pengguna pertama**
+yang dibuat, jadi tidak hilang.
 
 ## Fitur di panel "Tersimpan di database"
 
@@ -120,9 +144,13 @@ Riwayat dibatasi 1000 entri terakhir.
 
 ## Catatan keamanan
 
-Aplikasi ini **tidak memiliki login**. Jalankan di jaringan internal tepercaya. Untuk akses
-dari internet, taruh di belakang reverse proxy dengan autentikasi (mis. Nginx/Caddy/Traefik
-dengan basic auth).
+Aplikasi ini punya **login sendiri** (lihat bagian Login di atas), tapi aplikasi ini tidak
+mengakhiri TLS. Jalankan di jaringan internal tepercaya; untuk akses dari internet, taruh di
+belakang reverse proxy dengan HTTPS (mis. Nginx/Caddy/Traefik). Set `COOKIE_SECURE=1` kalau
+diakses lewat HTTPS agar cookie sesi ikut ditandai `Secure`.
+
+Belum ada perlindungan terhadap brute force: endpoint login tidak membatasi jumlah
+percobaan dari satu alamat. Kalau diakses dari internet, batasi lewat reverse proxy.
 
 ## Mengubah port
 
@@ -138,7 +166,7 @@ nama yang sama, lalu build seperti biasa (file yang sudah ada dilewati).
 ```
 Dockerfile
 docker-compose.yml
-server.py          # server + API SQLite + penulis .xlsx (hanya pustaka standar Python)
+server.py          # server + API SQLite + login/sesi + penulis .xlsx (pustaka standar Python)
 fetch_vendor.py    # mengunduh jsPDF, SheetJS, JsBarcode, qrcode-generator
 static/index.html  # aplikasi
 data/              # database SQLite (labels.db)
